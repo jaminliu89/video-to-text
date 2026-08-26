@@ -49,6 +49,7 @@ def get_gui_config() -> dict:
 # 本地 Whisper
 WHISPER_MODEL = _get("WHISPER_MODEL", "small")
 WHISPER_CLI = _get("WHISPER_CLI", "whisper-cli")
+WHISPER_MODEL_DIR = Path(_get("WHISPER_MODEL_DIR", str(Path.home() / ".cache" / "whisper"))).expanduser()
 
 # 硅基流动
 SILICONFLOW_API_KEY = _get("SILICONFLOW_API_KEY", "")
@@ -108,6 +109,7 @@ CONFIG_FIELDS = [
         "section": "本地 Whisper",
         "items": [
             {"key": "WHISPER_MODEL", "label": "Whisper 模型", "type": "text", "default": "small"},
+            {"key": "WHISPER_MODEL_DIR", "label": "模型目录", "type": "text", "default": "~/.cache/whisper"},
         ],
     },
     {
