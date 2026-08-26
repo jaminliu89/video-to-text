@@ -196,8 +196,9 @@ def results_area():
 
 
 def render_upload_area():
-    def on_upload(e):
-        add_file(e.file.name, e.file.content.read())
+    async def on_upload(e):
+        content = await e.file.read()
+        add_file(e.file.name, content)
         files_area.refresh()
         ui.notify(f"已添加: {e.file.name}", type="info")
 
@@ -412,4 +413,5 @@ if __name__ in {"__main__", "__mp_main__"}:
         native=False,
         window_size=(900, 750),
         reload=False,
+        storage_secret="videotext-gui-secret",
     )
