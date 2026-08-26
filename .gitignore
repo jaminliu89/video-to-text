@@ -1,11 +1,38 @@
-
+# 环境
 .env
-.DS_Store
-__pycache__/
-.nicegui/
-cache/
-output/
-*.pyc
-*.pyo
+.env.local
 .venv/
 venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 运行数据
+cache/
+output/
+input/
+.nicegui/
+*.log
+*.tmp
+
+# 打包产物
+dist/
+build/
+*.spec
+*.app
+*.dmg
+*.exe
+*.AppImage
