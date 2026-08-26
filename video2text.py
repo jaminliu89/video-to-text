@@ -227,9 +227,10 @@ def transcribe(audio_path: Path, cache_key: str, model: str) -> dict:
     
     output_prefix = CACHE_DIR / f"{cache_key}_{model_name}"
     
-    # 按音频时长估算转写耗时: whisper-small 约 8x 实时, 加 120s 余量, 最低 10 分钟
-    audio_dur = audio_duration(audio_path)
-    est = max(600, int(audio_dur * 0.15) + 120)
+    # 按音频大小估算转写超时: 1MB≈8s(留足余量), 最低 20 分钟, 兜底 60 分钟
+    audio_mb = audio_path.stat().st_size / 1024 / 1024
+    est = int(audio_mb * 8) + 120
+    est = max(1200, min(est, 3600))
     
     run_cmd([
         WHISPER_CLI,
@@ -916,13 +917,17 @@ def process_single(video_path: Path, args) -> tuple:
 # ============ 批量处理 ============
 
 def find_videos(input_path: Path) -> list:
-    """找到目录下所有视频文件"""
+    """找到目录下所有视频文件，跳过 macOS 资源分叉文件（._前缀）和小于 1MB 的垃圾文件"""
     videos = []
     for ext in sorted(VIDEO_EXTENSIONS):
         videos.extend(sorted(input_path.glob(f"*{ext}")))
         videos.extend(sorted(input_path.glob(f"*{ext.upper()}")))
-    # 去重
-    return list(dict.fromkeys(videos))
+    # 去重 + 过滤掉 ._ 开头的 macOS 资源分叉 + 小于 1MB 的文件
+    filtered = [
+        v for v in dict.fromkeys(videos)
+        if not v.name.startswith("._") and v.stat().st_size > 1 * 1024 * 1024
+    ]
+    return filtered
 
 def process_batch(input_dir: Path, args) -> list:
     """批量处理目录下的所有视频"""
