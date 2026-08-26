@@ -151,9 +151,13 @@ body { background: #faf8f5; color: #1a1a1a; }
 .text-h6 { font-weight: 600 !important; letter-spacing: -0.01em; color: #1a1a1a !important; }
 .text-subtitle2 { font-size: 13px !important; color: #6a6a6a !important; }
 .q-separator { border-color: #e8e6e2 !important; }
-.q-uploader { background: #f7f5f1 !important; border: 1px dashed #d5d3cf !important; border-radius: 10px !important; color: #1a1a1a !important; }
+.q-uploader { background: #ffffff !important; border: 1px dashed #d5d3cf !important; border-radius: 10px !important; color: #1a1a1a !important; }
+.q-uploader__header { color: #6a6a6a !important; }
+.q-uploader__list { color: #2a2a2a !important; }
 .q-linear-progress { border-radius: 2px !important; background: #edebe7 !important; }
-.q-linear-progress__bar { background: #1a1a1a !important; }
+.q-linear-progress__bar { background: #1a1a1a !important; color: #ffffff !important; }
+.q-linear-progress__label { color: #ffffff !important; }
+.q-linear-progress--indeterminate .q-linear-progress__inner { background: #1a1a1a !important; }
 pre { background: #f7f5f1 !important; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 12px; color: #2a2a2a !important; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
