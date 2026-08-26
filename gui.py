@@ -240,45 +240,93 @@ def add_queue_files(mode: str, engine: str = None, deep: bool = False):
 
 # ============ 批量队列 ============
 
+MAX_RETRIES = 2  # 失败自动重试次数
+
+
 async def run_queue():
-    """顺序处理队列里的所有任务"""
+    """顺序处理队列里的所有任务，失败自动重试"""
     global QUEUE_RUNNING, TOTAL_PROGRESS
     QUEUE_RUNNING = True
     total = len(QUEUE)
+    completed = sum(1 for q in QUEUE if q["status"] == "done")
 
-    for i, item in enumerate(QUEUE):
-        if item["status"] in ("done", "error"):
-            continue
+    while True:
+        # 找下一个要跑的（pending 或 error 且 retries < MAX_RETRIES）
+        next_item = None
+        for item in QUEUE:
+            if item["status"] in ("done", "running"):
+                continue
+            if item["status"] == "error" and item.get("retries", 0) >= MAX_RETRIES:
+                continue
+            next_item = item
+            break
 
-        item["status"] = "running"
-        item["progress"] = 5
+        if not next_item:
+            break
+
+        next_item["status"] = "running"
+        next_item["progress"] = 5
         queue_area.refresh()
 
         try:
             result = await asyncio.to_thread(
                 process_single_video,
-                Path(item["path"]),
-                mode=item["mode"],
-                engine=item["engine"],
-                deep=item["deep"],
+                Path(next_item["path"]),
+                mode=next_item["mode"],
+                engine=next_item["engine"],
+                deep=next_item["deep"],
             )
-            item["status"] = "done"
-            item["progress"] = 100
-            item["result"] = result
+            next_item["status"] = "done"
+            next_item["progress"] = 100
+            next_item["result"] = result
+            completed += 1
             # 写历史
             hist = app.storage.user.get("history", [])
-            hist.insert(0, {"name": item["name"], "mode": item_mode_label(item), "output": str(result["output_path"])})
+            hist.insert(0, {"name": next_item["name"], "mode": item_mode_label(next_item), "output": str(result["output_path"])})
             app.storage.user["history"] = hist[:100]
         except Exception as e:
-            item["status"] = "error"
-            item["error"] = str(e)
+            err = str(e)
+            if len(err) > 300:
+                err = err[:200] + " ... " + err[-80:]
+            next_item["error"] = err
+            next_item["retries"] = next_item.get("retries", 0) + 1
+            if next_item["retries"] < MAX_RETRIES:
+                next_item["status"] = "pending"  # 自动重试
+            else:
+                next_item["status"] = "error"  # 重试耗尽
 
-        TOTAL_PROGRESS = int((i + 1) / total * 100)
+        TOTAL_PROGRESS = int(completed / total * 100) if total else 0
         queue_area.refresh()
         history_area.refresh()
 
     QUEUE_RUNNING = False
     queue_area.refresh()
+
+
+def retry_item(idx: int):
+    """手动重跑指定任务"""
+    item = QUEUE[idx]
+    item["status"] = "pending"
+    item["error"] = None
+    item["retries"] = 0
+    queue_area.refresh()
+    if not QUEUE_RUNNING:
+        asyncio.create_task(run_queue())
+
+
+def retry_all_failed():
+    """重跑所有失败的任务"""
+    has_failed = False
+    for item in QUEUE:
+        if item["status"] == "error":
+            item["status"] = "pending"
+            item["error"] = None
+            item["retries"] = 0
+            has_failed = True
+    if has_failed:
+        queue_area.refresh()
+        if not QUEUE_RUNNING:
+            asyncio.create_task(run_queue())
 
 
 def item_mode_label(item: dict) -> str:
@@ -316,33 +364,53 @@ def queue_area():
 
     total = len(QUEUE)
     done = sum(1 for q in QUEUE if q["status"] == "done")
-    running = sum(1 for q in QUEUE if q["status"] == "running")
+    failed = sum(1 for q in QUEUE if q["status"] == "error")
 
     with ui.card().classes("w-full p-5 mt-4"):
         with ui.row().classes("items-center justify-between w-full mb-3"):
-            ui.label(f"处理队列（{done}/{total}）").classes("text-sm font-medium")
+            ui.label(f"处理队列（{done}/{total}）" + (f" · {failed} 失败" if failed else "")).classes("text-sm font-medium")
             with ui.row().classes("gap-2"):
+                if failed > 0 and not QUEUE_RUNNING:
+                    ui.button("重跑失败", icon="refresh", on_click=retry_all_failed).props("flat size=sm dense")
                 ui.button("清除已完成", on_click=clear_queue_done).props("flat size=sm dense")
                 if not QUEUE_RUNNING:
                     ui.button("清空", on_click=clear_queue_all).props("flat size=sm dense")
 
         ui.linear_progress(value=TOTAL_PROGRESS / 100).props("inset").classes("mb-3")
 
-        with ui.column().classes("w-full gap-2"):
-            for item in QUEUE:
+        with ui.column().classes("w-full gap-1"):
+            for idx, item in enumerate(QUEUE):
                 with ui.row().classes("items-center justify-between w-full py-2"):
                     with ui.row().classes("items-center gap-3 flex-1 min-w-0"):
-                        status_icon = {"pending": "schedule", "running": "play_arrow", "done": "check_circle", "error": "error"}.get(item["status"], "schedule")
+                        status_icon = {
+                            "pending": "schedule",
+                            "running": "play_arrow",
+                            "done": "check_circle",
+                            "error": "error",
+                        }.get(item["status"], "schedule")
                         ui.icon(status_icon, size="sm").classes(f"status-{item['status']} flex-shrink-0")
                         with ui.column().classes("gap-0 flex-1 min-w-0"):
                             ui.label(item["name"]).classes("text-sm truncate")
-                            ui.label(item_mode_label(item)).classes("text-xs opacity-40")
-                    if item["status"] == "running":
-                        ui.label(f"{item['progress']}%").classes("text-xs opacity-60 w-10 text-right")
-                    elif item["status"] == "done":
-                        ui.button("查看", icon="visibility", on_click=lambda item=item: view_result(item["result"]["output_path"])).props("flat size=sm dense")
-                    elif item["status"] == "error":
-                        ui.label(item.get("error", "失败")[:20]).classes("text-xs status-error")
+                            sub = item_mode_label(item)
+                            if item.get("retries") and item["status"] != "done":
+                                sub += f" · 重试 {item['retries']}/{MAX_RETRIES}"
+                            ui.label(sub).classes("text-xs opacity-40")
+
+                    with ui.row().classes("items-center gap-1 flex-shrink-0"):
+                        if item["status"] == "running":
+                            ui.label(f"{item['progress']}%").classes("text-xs opacity-60 w-10 text-right")
+                        elif item["status"] == "done":
+                            ui.button("查看", icon="visibility", on_click=lambda item=item: view_result(item["result"]["output_path"])).props("flat size=sm dense")
+                        elif item["status"] == "error":
+                            ui.button("重跑", icon="refresh", on_click=lambda idx=idx: retry_item(idx)).props("flat size=sm dense").classes("status-error")
+                        elif item["status"] == "pending":
+                            ui.label("等待中").classes("text-xs opacity-40")
+
+                # 失败项下方显示错误详情
+                if item["status"] == "error" and item.get("error"):
+                    with ui.row().classes("w-full pl-9"):
+                        with ui.expansion("查看错误详情", icon="error", dense=True).classes("w-full"):
+                            ui.label(item["error"]).classes("text-xs status-error").style("white-space: pre-wrap; word-break: break-all;")
 
 
 @ui.refreshable

@@ -76,6 +76,19 @@ def file_hash(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()[:12]
 
+def audio_duration(audio_path: Path) -> float:
+    """拿音频时长（秒），用于估算转写耗时"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", str(audio_path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        info = json.loads(r.stdout)
+        return float(info.get("format", {}).get("duration", 0))
+    except Exception:
+        return 0
+
 def fmt_time(seconds: float) -> str:
     td = timedelta(seconds=int(seconds))
     total_seconds = int(td.total_seconds())
@@ -90,7 +103,7 @@ def fmt_time_hms(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 def run_cmd(cmd: list, **kwargs) -> subprocess.CompletedProcess:
-    timeout = kwargs.pop("timeout", 120)
+    timeout = kwargs.pop("timeout", 1800)  # 默认 30 分钟，长视频转写不超时
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
     if result.returncode != 0:
         print(f"  ✗ 命令失败: {' '.join(cmd[:3])}...")
@@ -214,6 +227,10 @@ def transcribe(audio_path: Path, cache_key: str, model: str) -> dict:
     
     output_prefix = CACHE_DIR / f"{cache_key}_{model_name}"
     
+    # 按音频时长估算转写耗时: whisper-small 约 8x 实时, 加 120s 余量, 最低 10 分钟
+    audio_dur = audio_duration(audio_path)
+    est = max(600, int(audio_dur * 0.15) + 120)
+    
     run_cmd([
         WHISPER_CLI,
         "-m", str(model_file),
@@ -221,7 +238,7 @@ def transcribe(audio_path: Path, cache_key: str, model: str) -> dict:
         "-oj",
         "-of", str(output_prefix),
         "-l", "zh",
-    ])
+    ], timeout=est)
     
     json_files = sorted(CACHE_DIR.glob(f"{cache_key}_{model_name}*.json"))
     if not json_files:
