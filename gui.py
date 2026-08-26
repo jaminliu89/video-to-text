@@ -152,8 +152,14 @@ body { background: #faf8f5; color: #1a1a1a; }
 .text-subtitle2 { font-size: 13px !important; color: #6a6a6a !important; }
 .q-separator { border-color: #e8e6e2 !important; }
 .q-uploader { background: #ffffff !important; border: 1px dashed #d5d3cf !important; border-radius: 10px !important; color: #1a1a1a !important; }
-.q-uploader__header { color: #6a6a6a !important; }
-.q-uploader__list { color: #2a2a2a !important; }
+/* 强制覆盖 Quasar uploader 的深色 header */
+.q-uploader__header { background: #ffffff !important; color: #1a1a1a !important; }
+.q-uploader__header .q-uploader__title,
+.q-uploader__header .q-uploader__subtitle { color: #1a1a1a !important; }
+.q-uploader__list { background: #ffffff !important; color: #2a2a2a !important; }
+.q-uploader__list .q-item { color: #2a2a2a !important; }
+.q-uploader__list .q-item__label { color: #2a2a2a !important; }
+.q-uploader .q-uploader__progress-bar { background: #1a1a1a !important; }
 .q-linear-progress { border-radius: 2px !important; background: #edebe7 !important; }
 .q-linear-progress__bar { background: #1a1a1a !important; color: #ffffff !important; }
 .q-linear-progress__label { color: #ffffff !important; }
