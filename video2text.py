@@ -38,55 +38,30 @@ import shutil
 from pathlib import Path
 from datetime import timedelta, datetime
 
-# ============ 配置 ============
+import config as cfg  # 统一配置管理
 
-BASE_DIR = Path(__file__).parent
-
-# 从 .env 文件加载配置（可选）
-_ENV_FROM_FILE: dict[str, str] = {}
-env_path = BASE_DIR / ".env"
-if env_path.exists():
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                k = k.strip()
-                v = v.strip().strip('"').strip("'")
-                _ENV_FROM_FILE[k] = v
-                if k not in os.environ:
-                    os.environ[k] = v
-
-CACHE_DIR = BASE_DIR / "cache"
-OUTPUT_DIR = BASE_DIR / "output"
-CACHE_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+BASE_DIR = cfg.BASE_DIR
+CACHE_DIR = cfg.CACHE_DIR
+OUTPUT_DIR = cfg.OUTPUT_DIR
 
 # whisper.cpp
-WHISPER_CLI = "whisper-cli"
-WHISPER_MODEL_DIR = Path.home() / ".cache" / "whisper"
-DEFAULT_WHISPER_MODEL = "small"
+WHISPER_CLI = cfg.WHISPER_CLI
+DEFAULT_WHISPER_MODEL = cfg.WHISPER_MODEL
 
 # 硅基流动（LLM + VLM）
-SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
-SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
-LLM_MODEL = "deepseek-ai/DeepSeek-V3"
-VLM_MODEL = "Qwen/Qwen3-VL-32B-Instruct"
+SILICONFLOW_API_KEY = cfg.SILICONFLOW_API_KEY
+SILICONFLOW_BASE = cfg.SILICONFLOW_BASE
+LLM_MODEL = cfg.LLM_MODEL
+VLM_MODEL = cfg.VLM_MODEL
 
-# 火山方舟（豆包视频理解，可选）
-# 豆包视频理解（火山方舟）：只认 .env 文件里的 ARK_API_KEY / ARK_VIDEO_ENDPOINT
-# shell 环境变量里的 ARK_API_KEY / VOLC_ARK_API_KEY_V3 可能是其他用途的旧 key，不可信
-def _env_value(key: str, fallback: str = "") -> str:
-    """从 .env 文件读取（优先），其次环境变量"""
-    return _ENV_FROM_FILE.get(key, "") or os.environ.get(key, fallback)
-
-ARK_API_KEY = _env_value("ARK_API_KEY")
-ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3"
-VIDEO_MODEL_ENDPOINT = _env_value("ARK_VIDEO_ENDPOINT")
+# 火山方舟（豆包视频理解）
+ARK_API_KEY = cfg.ARK_API_KEY
+ARK_BASE = cfg.ARK_BASE
+VIDEO_MODEL_ENDPOINT = cfg.ARK_VIDEO_ENDPOINT
 
 # Obsidian
-OBSIDIAN_VAULT = Path.home() / "Documents" / "Obsidian Vault"
-DEFAULT_OBSIDIAN_FOLDER = "01_内容创作/视频笔记"
+OBSIDIAN_VAULT = cfg.OBSIDIAN_VAULT
+DEFAULT_OBSIDIAN_FOLDER = cfg.DEFAULT_OBSIDIAN_FOLDER
 
 # 支持的视频格式
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".flv", ".webm", ".m4v", ".wmv"}

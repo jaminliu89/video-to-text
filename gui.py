@@ -16,6 +16,7 @@ from nicegui import ui, app
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import video2text as v2t
+import config as cfg
 
 # ============ 全局状态（可变容器，模块级） ============
 
@@ -390,6 +391,14 @@ def index():
     ui.add_head_html('<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">')
     # Material Icons 在 NiceGUI 内置 fonts.css 中已加载，无需外链
 
+    # 启动时从 storage 加载配置（优先级高于 .env）
+    _saved_cfg = app.storage.user.get("config", {})
+    if _saved_cfg:
+        cfg.set_gui_config(_saved_cfg)
+        # 重新加载 video2text 的配置变量
+        import importlib
+        importlib.reload(v2t)
+
     def go(v):
         global VIEW
         VIEW = v
@@ -401,7 +410,9 @@ def index():
             with ui.row().classes("items-center gap-2"):
                 ui.icon("movie").props("size=sm").classes("opacity-60")
                 ui.label("VideoToText").classes("text-sm font-medium")
-            ui.button(icon="history", on_click=lambda: go("history")).props("flat size=sm dense")
+            with ui.row().classes("items-center gap-1"):
+                ui.button(icon="history", on_click=lambda: go("history")).props("flat size=sm dense")
+                ui.button(icon="settings", on_click=lambda: go("settings")).props("flat size=sm dense")
 
         with ui.column().classes("flex-1 w-full max-w-3xl mx-auto px-6 py-8"):
             page_content()
@@ -500,6 +511,52 @@ def page_content():
         ui.button("开始拆解", icon="play_arrow", on_click=do_deep).props("unelevated").classes("px-8 py-3")
         status_area()
         results_area()
+
+
+    # ===== 设置页 =====
+    if VIEW == "settings":
+        ui.label("设置").classes("text-h6 mb-1")
+        ui.label("配置保存到本地，不上传").classes("text-xs opacity-40 mb-4")
+
+        def save_config():
+            """保存配置到 app.storage.user 并刷新 config 模块"""
+            saved = {}
+            for section in cfg.CONFIG_FIELDS:
+                for item in section["items"]:
+                    key = item["key"]
+                    val = input_refs[key].value
+                    if val:  # 只保存非空值
+                        saved[key] = val
+            app.storage.user["config"] = saved
+            cfg.set_gui_config(saved)
+            ui.notify("已保存，重新加载页面生效", type="positive")
+
+        input_refs = {}
+        current_cfg = app.storage.user.get("config", {})
+
+        for section in cfg.CONFIG_FIELDS:
+            with ui.card().classes("w-full p-5 mb-4"):
+                ui.label(section["section"]).classes("text-sm font-medium mb-4")
+                with ui.column().classes("w-full gap-4"):
+                    for item in section["items"]:
+                        key = item["key"]
+                        # 显示值：优先从 storage 读，其次 env，最后默认
+                        val = current_cfg.get(key, "") or cfg._get(key, item["default"])
+                        # 密码类型不显示真实值（显示占位符）
+                        placeholder = "••••••••" if item["type"] == "password" and val else ""
+                        inp = ui.input(
+                            label=item["label"],
+                            value=val if item["type"] != "password" else "",
+                            password=item["type"] == "password",
+                            password_toggle_button=item["type"] == "password",
+                        ).props("outlined dense").classes("w-full")
+                        if placeholder:
+                            inp.props(f'placeholder="{placeholder}"')
+                        input_refs[key] = inp
+
+        ui.button("保存设置", icon="save", on_click=save_config).props("unelevated").classes("px-8 py-3")
+        ui.label("重新加载页面后所有配置生效").classes("text-xs opacity-40 mt-2")
+
 
     # ===== 历史页 =====
     if VIEW == "history":
