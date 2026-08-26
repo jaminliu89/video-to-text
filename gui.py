@@ -1,8 +1,8 @@
 """
-VideoToText GUI v0.3 — 稳定版
-两个核心场景：逐字稿 / 深度拆解
-架构：模块级状态 + 独立 refreshable 分区（不用 ui.state，避开快照坑）
-NiceGUI + Parchment 4.0 黑白风格
+VideoToText GUI v0.4 — 可用版
+P0 全功能：批量队列 / 历史记录 / 结果浏览 / Obsidian 导出
+架构：模块级状态 + 独立 refreshable 分区
+NiceGUI + Parchment 4.0 浅色黑白风格
 """
 
 import os
@@ -18,23 +18,105 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import video2text as v2t
 import config as cfg
 
-# ============ 全局状态（可变容器，模块级） ============
+# ============ 全局状态 ============
 
-VIEW = "home"  # home / transcript / deep / history
-FILES = []  # [{name, path, size}]
-PROCESSING = False
-STEP_TEXT = ""
-STEP_PCT = 0
-RESULTS = []  # 处理结果列表
+VIEW = "home"  # home / transcript / deep / history / settings
+CURRENT_RESULT = None  # 当前查看的结果详情
+
+# 批量队列
+QUEUE = []  # [{name, path, size, status: pending/running/done/error, progress: 0-100, result, error}]
+QUEUE_RUNNING = False
+TOTAL_PROGRESS = 0
+
+# 引擎和深度
 ENGINE = "doubao"
 DEPTH = "standard"
+
+
+def scan_output_dir() -> list[dict]:
+    """扫 output 目录，生成历史记录列表（按修改时间倒序）"""
+    items = []
+    for md_file in sorted(v2t.OUTPUT_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+        name = md_file.stem  # 文件名（带模式后缀）
+        # 从文件名解析：原名_模式_引擎_深度
+        parts = name.rsplit("_", 1)
+        if len(parts) < 2:
+            continue
+        base_name = parts[0]
+        mode_str = parts[1]
+
+        # 解析模式
+        mode_label = ""
+        if mode_str.startswith("transcript"):
+            mode_label = "逐字稿"
+        elif mode_str.startswith("audio"):
+            mode_label = "逐字稿"
+        elif mode_str.startswith("deep"):
+            mode_label = "深度拆解"
+            if "doubao" in mode_str:
+                mode_label += " / 豆包"
+            elif "frames" in mode_str:
+                mode_label += " / 关键帧"
+            elif "local" in mode_str:
+                mode_label += " / 本地"
+
+        size = md_file.stat().st_size
+        mtime = md_file.stat().st_mtime
+
+        items.append({
+            "name": base_name + ".mp4",
+            "mode": mode_label,
+            "output": str(md_file),
+            "size_kb": round(size / 1024, 1),
+            "mtime": mtime,
+        })
+    return items[:50]
+
+
+def read_result_preview(md_path: str) -> dict:
+    """读取结果 md 文件，提取摘要和逐字稿预览"""
+    path = Path(md_path)
+    if not path.exists():
+        return {}
+    text = path.read_text()
+    lines = text.split("\n")
+
+    # 找摘要段
+    summary = []
+    transcript = []
+    in_summary = False
+    in_transcript = False
+
+    for line in lines[:100]:  # 只读前 100 行
+        if line.startswith("# ") and "逐字稿" not in line and "转写" not in line:
+            in_summary = True
+            continue
+        if line.startswith("## 逐字稿") or line.startswith("## 转写") or line.startswith("## 完整逐字稿"):
+            in_summary = False
+            in_transcript = True
+            continue
+        if line.startswith("## "):
+            if in_transcript:
+                in_transcript = False
+            continue
+        if in_summary and line.strip():
+            summary.append(line)
+        if in_transcript and line.strip():
+            transcript.append(line)
+
+    return {
+        "full_text": text,
+        "summary": "\n".join(summary[:20]),
+        "transcript": "\n".join(transcript[:30]),
+        "has_summary": bool(summary),
+        "has_transcript": bool(transcript),
+    }
 
 
 # ============ 样式 ============
 
 CSS = """
 * { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'PingFang SC', sans-serif; }
-/* 让 Material Icons 保留自己的字体，不要被上面的通配符覆盖 */
 .material-icons, .q-icon, i[class*="material-icons"] {
   font-family: 'Material Icons' !important;
   font-weight: normal;
@@ -56,29 +138,32 @@ CSS = """
 body { background: #faf8f5; color: #1a1a1a; }
 .q-card { background: #ffffff !important; border: 1px solid #e5e3df !important; border-radius: 10px !important; box-shadow: none !important; }
 .q-btn { border-radius: 6px !important; font-weight: 500 !important; text-transform: none !important; letter-spacing: 0 !important; }
-/* 按钮 flat 样式覆盖（干掉 Quasar 默认蓝色） */
 .q-btn--flat { color: #5a5a5a !important; }
 .q-btn--flat:hover { color: #1a1a1a !important; background: rgba(26,26,26,0.05) !important; }
 .q-btn--flat .q-icon { color: inherit !important; }
-
-/* 按钮 outline 样式 */
 .q-btn--outline { border-color: #d5d3cf !important; color: #4a4a4a !important; }
 .q-btn--outline:hover { border-color: #1a1a1a !important; color: #1a1a1a !important; }
-
-/* 按钮 unelevated 样式 */
 .q-btn--unelevated { background: #1a1a1a !important; color: #ffffff !important; }
 .q-btn--unelevated:hover { background: #333 !important; }
 .q-btn--unelevated .q-icon { color: #ffffff !important; }
-
-/* 通用按钮图标颜色继承 */
 .q-btn .q-icon { color: inherit !important; }
 .text-h4 { font-weight: 600 !important; letter-spacing: -0.02em; color: #1a1a1a !important; }
 .text-h6 { font-weight: 600 !important; letter-spacing: -0.01em; color: #1a1a1a !important; }
 .text-subtitle2 { font-size: 13px !important; color: #6a6a6a !important; }
 .q-separator { border-color: #e8e6e2 !important; }
-.q-uploader { background: #f7f5f1 !important; border: 1px dashed #d5d3cf !important; border-radius: 10px !important; color: #1a1a1a !important; }
+.q-uploader { background: #ffffff !important; border: 1px dashed #d5d3cf !important; border-radius: 10px !important; color: #1a1a1a !important; }
+/* 强制覆盖 Quasar uploader 的深色 header */
+.q-uploader__header { background: #ffffff !important; color: #1a1a1a !important; }
+.q-uploader__header .q-uploader__title,
+.q-uploader__header .q-uploader__subtitle { color: #1a1a1a !important; }
+.q-uploader__list { background: #ffffff !important; color: #2a2a2a !important; }
+.q-uploader__list .q-item { color: #2a2a2a !important; }
+.q-uploader__list .q-item__label { color: #2a2a2a !important; }
+.q-uploader .q-uploader__progress-bar { background: #1a1a1a !important; }
 .q-linear-progress { border-radius: 2px !important; background: #edebe7 !important; }
-.q-linear-progress__bar { background: #1a1a1a !important; }
+.q-linear-progress__bar { background: #1a1a1a !important; color: #ffffff !important; }
+.q-linear-progress__label { color: #ffffff !important; }
+.q-linear-progress--indeterminate .q-linear-progress__inner { background: #1a1a1a !important; }
 pre { background: #f7f5f1 !important; padding: 16px; border-radius: 6px; overflow-x: auto; font-size: 12px; color: #2a2a2a !important; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -93,283 +178,351 @@ pre { background: #f7f5f1 !important; padding: 16px; border-radius: 6px; overflo
 .home-card:hover .home-card-icon { background: #1a1a1a !important; color: #ffffff !important; }
 .home-card-icon { transition: all 0.15s ease; background: #f0eee9 !important; color: #1a1a1a !important; }
 
-/* Switch 黑白 */
 .q-toggle__inner--active .q-toggle__track { background: #1a1a1a !important; }
 .q-toggle__inner--active .q-toggle__thumb { background: #ffffff !important; }
 .q-toggle__track { background: #d5d3cf !important; }
 
-/* Radio 黑白 */
 .q-radio__inner--active .q-radio__icon { color: #1a1a1a !important; }
 .q-radio .q-icon { color: #8a8a8a !important; }
 .q-radio__icon { color: #b5b3af !important; }
 
-/* Checkbox 黑白 */
-.q-checkbox__inner--active .q-checkbox__bg { background: #1a1a1a !important; border-color: #1a1a1a !important; }
-.q-checkbox__bg { border-color: #d5d3cf !important; background: transparent !important; }
-.q-checkbox__inner--active .q-checkbox__check { color: #ffffff !important; }
-
-/* Toggle button 黑白 */
 .q-btn-toggle .q-btn { background: transparent !important; color: #6a6a6a !important; border-color: #d5d3cf !important; }
-.q-btn-toggle .q-btn--active { background: #1a1a1a !important; color: #fff !important; border-color: #1a1a1a !important; }
+.q-btn-toggle .q-btn--active { background: #1a1a1a !important; color: #fff !important; }
 
-/* Upload 区域 */
 .q-uploader__header, .q-uploader__list .q-item { color: #2a2a2a !important; }
-.q-uploader__title { color: #3a3a3a !important; }
-.q-uploader__subtitle { color: #8a8a8a !important; }
-.q-uploader__icon { color: #8a8a8a !important; }
-.q-uploader__progress { background: #1a1a1a !important; }
-
-/* 进度条 */
-.q-linear-progress__bar { background: #1a1a1a !important; }
-.q-linear-progress__model { background: #1a1a1a !important; }
-
-/* Tabs */
-.q-tabs { border-bottom: 1px solid #e5e3df !important; background: transparent !important; }
-.q-tab { color: #8a8a8a !important; }
-.q-tab--active { color: #1a1a1a !important; }
-.q-tabs__indicator { background: #1a1a1a !important; }
-
-/* Expansion items */
-.q-expansion-item { background: #ffffff !important; border: 1px solid #e5e3df !important; border-radius: 10px !important; }
 .q-expansion-item__icon { color: #6a6a6a !important; }
-.q-expansion-item__label { color: #1a1a1a !important; font-weight: 500; }
-.q-expansion-item__header { padding: 0 16px; }
-
-/* 通知 */
-.q-notification { background: #1a1a1a !important; color: #fff !important; }
-.q-notification--positive { background: #2a7a2a !important; }
-.q-notification--negative { background: #a02020 !important; }
-.q-notification--warning { background: #8a6a20 !important; }
-.q-notification--info { background: #4a4a4a !important; }
-
-/* Tooltip */
-.q-tooltip { background: #1a1a1a !important; color: #fff !important; }
 
 /* Dialog */
-.q-dialog { background: #ffffff !important; color: #1a1a1a !important; }
-.q-dialog__backdrop { background: rgba(0,0,0,0.3) !important; }
+.q-dialog .q-card { background: #ffffff !important; }
 
-/* 按钮 focus/ripple 去掉蓝色 */
-.q-btn--focused { box-shadow: none !important; }
-.q-btn:focus { outline: none; }
-.q-btn__ripple { background: rgba(26,26,26,0.2) !important; }
-
-/* 输入框 */
-.q-field__control { color: #1a1a1a !important; }
-.q-field__label { color: #6a6a6a !important; }
-.q-field--focused .q-field__label { color: #1a1a1a !important; }
-.q-field--focused .q-field__control { border-color: #1a1a1a !important; }
-.q-field__control:before, .q-field__control:after { border-color: #e5e3df !important; }
-.q-field--focused .q-field__control:before { border-color: #1a1a1a !important; }
-
-/* Separator */
-.q-separator { background: #e5e3df !important; border-color: #e5e3df !important; }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d5d3cf; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #c5c3bf; }
-
-/* home card icons */
-.home-card-icon {
-  transition: all 0.15s ease;
-  background: #f0eee9 !important;
-  color: #1a1a1a !important;
-  border-radius: 8px;
-  padding: 8px;
-  width: 40px !important;
-  height: 40px !important;
-  font-size: 24px !important;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.home-card:hover .home-card-icon { background: #1a1a1a !important; color: #ffffff !important; }
-
-/* icon-symbol 类保留备用 */
-.icon-symbol { font-family: inherit; font-size: 18px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
-
-/* 全局干掉 Quasar 蓝色（所有 primary/blue 都改成黑白） */
-:root {
-  --q-primary: #1a1a1a !important;
-  --q-secondary: #6a6a6a !important;
-  --q-accent: #1a1a1a !important;
-  --q-info: #4a4a4a !important;
-  --q-positive: #2a7a2a !important;
-  --q-negative: #a02020 !important;
-  --q-warning: #8a6a20 !important;
-}
-
-/* 覆盖 text-primary 等工具类颜色 */
-.text-primary { color: #1a1a1a !important; }
-.bg-primary { background: #1a1a1a !important; }
-.text-grey-8 { color: #3a3a3a !important; }
-.text-grey-6 { color: #6a6a6a !important; }
-
-/* Loading bar */
-.q-loading-bar { background: #1a1a1a !important; }
-.q-loading-bar.bg-primary { background: #1a1a1a !important; }
-
-/* Switch / Toggle 文字颜色 */
-.q-toggle { color: #1a1a1a !important; }
-.q-toggle__label { color: #1a1a1a !important; }
-.q-toggle .q-icon { color: #1a1a1a !important; }
-
-/* Radio 文字颜色 */
-.q-radio { color: #1a1a1a !important; }
-.q-radio__label { color: #1a1a1a !important; }
-
-/* upload header 背景 */
-.q-uploader__header { background: transparent !important; }
-.q-uploader--bordered .q-uploader__header { background: transparent !important; }
-
+/* 队列状态色 */
+.status-pending { color: #8a8a8a !important; }
+.status-running { color: #1a1a1a !important; }
+.status-done { color: #2a7a2a !important; }
+.status-error { color: #a02020 !important; }
 """
 
 
-# ============ 处理逻辑（不依赖 UI 组件） ============
+# ============ 文件上传 ============
 
-def add_file(name: str, content: bytes):
-    global FILES
+UPLOAD_TMP_FILES = []  # 上传的文件列表（未入队）
+
+
+def add_upload_file(name: str, content: bytes):
+    """添加上传的文件到待处理列表"""
     tmp = v2t.CACHE_DIR / name
     tmp.write_bytes(content)
     size_mb = tmp.stat().st_size / 1024 / 1024
-    FILES.append({"name": name, "path": str(tmp), "size": size_mb})
+    UPLOAD_TMP_FILES.append({"name": name, "path": str(tmp), "size": size_mb})
 
 
-def remove_file(i: int):
-    global FILES
-    if 0 <= i < len(FILES):
-        FILES.pop(i)
+def add_queue_files(mode: str, engine: str = None, deep: bool = False):
+    """把待上传文件加入处理队列"""
+    global QUEUE
+    for f in UPLOAD_TMP_FILES:
+        QUEUE.append({
+            "name": f["name"],
+            "path": f["path"],
+            "size": f["size"],
+            "mode": mode,
+            "engine": engine,
+            "deep": deep,
+            "status": "pending",
+            "progress": 0,
+            "result": None,
+            "error": None,
+        })
+    UPLOAD_TMP_FILES.clear()
+    queue_area.refresh()
+    if not QUEUE_RUNNING:
+        asyncio.create_task(run_queue())
 
+
+# ============ 批量队列 ============
+
+MAX_RETRIES = 2  # 失败自动重试次数
+
+
+async def run_queue():
+    """顺序处理队列里的所有任务，失败自动重试"""
+    global QUEUE_RUNNING, TOTAL_PROGRESS
+    QUEUE_RUNNING = True
+    total = len(QUEUE)
+    completed = sum(1 for q in QUEUE if q["status"] == "done")
+
+    while True:
+        # 找下一个要跑的（pending 或 error 且 retries < MAX_RETRIES）
+        next_item = None
+        for item in QUEUE:
+            if item["status"] in ("done", "running"):
+                continue
+            if item["status"] == "error" and item.get("retries", 0) >= MAX_RETRIES:
+                continue
+            next_item = item
+            break
+
+        if not next_item:
+            break
+
+        next_item["status"] = "running"
+        next_item["progress"] = 5
+        queue_area.refresh()
+
+        try:
+            result = await asyncio.to_thread(
+                process_single_video,
+                Path(next_item["path"]),
+                mode=next_item["mode"],
+                engine=next_item["engine"],
+                deep=next_item["deep"],
+            )
+            next_item["status"] = "done"
+            next_item["progress"] = 100
+            next_item["result"] = result
+            completed += 1
+            # 写历史
+            hist = app.storage.user.get("history", [])
+            hist.insert(0, {"name": next_item["name"], "mode": item_mode_label(next_item), "output": str(result["output_path"])})
+            app.storage.user["history"] = hist[:100]
+        except Exception as e:
+            err = str(e)
+            if len(err) > 300:
+                err = err[:200] + " ... " + err[-80:]
+            next_item["error"] = err
+            next_item["retries"] = next_item.get("retries", 0) + 1
+            if next_item["retries"] < MAX_RETRIES:
+                next_item["status"] = "pending"  # 自动重试
+            else:
+                next_item["status"] = "error"  # 重试耗尽
+
+        TOTAL_PROGRESS = int(completed / total * 100) if total else 0
+        queue_area.refresh()
+        history_area.refresh()
+
+    QUEUE_RUNNING = False
+    queue_area.refresh()
+
+
+def retry_item(idx: int):
+    """手动重跑指定任务"""
+    item = QUEUE[idx]
+    item["status"] = "pending"
+    item["error"] = None
+    item["retries"] = 0
+    queue_area.refresh()
+    if not QUEUE_RUNNING:
+        asyncio.create_task(run_queue())
+
+
+def retry_all_failed():
+    """重跑所有失败的任务"""
+    has_failed = False
+    for item in QUEUE:
+        if item["status"] == "error":
+            item["status"] = "pending"
+            item["error"] = None
+            item["retries"] = 0
+            has_failed = True
+    if has_failed:
+        queue_area.refresh()
+        if not QUEUE_RUNNING:
+            asyncio.create_task(run_queue())
+
+
+def item_mode_label(item: dict) -> str:
+    if item["mode"] == "transcript":
+        return "逐字稿"
+    if item["mode"] == "deep":
+        engine_label = {"doubao": "豆包", "frames": "关键帧", "local": "本地"}.get(item["engine"], item["engine"])
+        return f"深度拆解 / {engine_label}"
+    return item["mode"]
+
+
+def clear_queue_done():
+    """清除已完成的任务"""
+    global QUEUE
+    QUEUE = [q for q in QUEUE if q["status"] not in ("done", "error")]
+    queue_area.refresh()
+
+
+def clear_queue_all():
+    """清空队列"""
+    global QUEUE, QUEUE_RUNNING
+    if QUEUE_RUNNING:
+        return
+    QUEUE = []
+    queue_area.refresh()
+
+
+# ============ 各 refreshable 分区 ============
+
+@ui.refreshable
+def queue_area():
+    """队列进度面板"""
+    if not QUEUE:
+        return
+
+    total = len(QUEUE)
+    done = sum(1 for q in QUEUE if q["status"] == "done")
+    failed = sum(1 for q in QUEUE if q["status"] == "error")
+
+    with ui.card().classes("w-full p-5 mt-4"):
+        with ui.row().classes("items-center justify-between w-full mb-3"):
+            ui.label(f"处理队列（{done}/{total}）" + (f" · {failed} 失败" if failed else "")).classes("text-sm font-medium")
+            with ui.row().classes("gap-2"):
+                if failed > 0 and not QUEUE_RUNNING:
+                    ui.button("重跑失败", icon="refresh", on_click=retry_all_failed).props("flat size=sm dense")
+                ui.button("清除已完成", on_click=clear_queue_done).props("flat size=sm dense")
+                if not QUEUE_RUNNING:
+                    ui.button("清空", on_click=clear_queue_all).props("flat size=sm dense")
+
+        ui.linear_progress(value=TOTAL_PROGRESS / 100).props("inset").classes("mb-3")
+
+        with ui.column().classes("w-full gap-1"):
+            for idx, item in enumerate(QUEUE):
+                with ui.row().classes("items-center justify-between w-full py-2"):
+                    with ui.row().classes("items-center gap-3 flex-1 min-w-0"):
+                        status_icon = {
+                            "pending": "schedule",
+                            "running": "play_arrow",
+                            "done": "check_circle",
+                            "error": "error",
+                        }.get(item["status"], "schedule")
+                        ui.icon(status_icon, size="sm").classes(f"status-{item['status']} flex-shrink-0")
+                        with ui.column().classes("gap-0 flex-1 min-w-0"):
+                            ui.label(item["name"]).classes("text-sm truncate")
+                            sub = item_mode_label(item)
+                            if item.get("retries") and item["status"] != "done":
+                                sub += f" · 重试 {item['retries']}/{MAX_RETRIES}"
+                            ui.label(sub).classes("text-xs opacity-40")
+
+                    with ui.row().classes("items-center gap-1 flex-shrink-0"):
+                        if item["status"] == "running":
+                            ui.label(f"{item['progress']}%").classes("text-xs opacity-60 w-10 text-right")
+                        elif item["status"] == "done":
+                            ui.button("查看", icon="visibility", on_click=lambda item=item: view_result(item["result"]["output_path"])).props("flat size=sm dense")
+                        elif item["status"] == "error":
+                            ui.button("重跑", icon="refresh", on_click=lambda idx=idx: retry_item(idx)).props("flat size=sm dense").classes("status-error")
+                        elif item["status"] == "pending":
+                            ui.label("等待中").classes("text-xs opacity-40")
+
+                # 失败项下方显示错误详情
+                if item["status"] == "error" and item.get("error"):
+                    with ui.row().classes("w-full pl-9"):
+                        with ui.expansion("查看错误详情", icon="error", dense=True).classes("w-full"):
+                            ui.label(item["error"]).classes("text-xs status-error").style("white-space: pre-wrap; word-break: break-all;")
+
+
+@ui.refreshable
+def files_upload_area():
+    """待上传文件列表"""
+    if not UPLOAD_TMP_FILES:
+        return
+    with ui.column().classes("w-full gap-2 mt-3"):
+        for i, f in enumerate(UPLOAD_TMP_FILES):
+            with ui.row().classes("items-center justify-between w-full p-3 rounded bg-[#f7f5f1]"):
+                with ui.row().classes("items-center gap-3"):
+                    ui.icon("movie", size="sm").classes("opacity-40")
+                    with ui.column().classes("gap-0"):
+                        ui.label(f["name"]).classes("text-sm")
+                        ui.label(f"{f['size']:.1f} MB").classes("text-xs opacity-40")
+                ui.button(icon="close", on_click=lambda i=i: (UPLOAD_TMP_FILES.pop(i), files_upload_area.refresh())).props("flat size=sm dense").classes("opacity-40")
+
+
+@ui.refreshable
+def history_area():
+    """历史记录（从 output 目录扫）"""
+    items = scan_output_dir()
+    if not items:
+        with ui.column().classes("items-center w-full py-16 gap-3"):
+            ui.icon("history", size="lg").classes("opacity-20")
+            ui.label("暂无记录").classes("text-sm opacity-40")
+        return
+
+    with ui.column().classes("w-full gap-2"):
+        for item in items[:30]:
+            with ui.row().classes("items-center justify-between w-full p-3 rounded bg-[#f7f5f1] hover:bg-[#f0eee9] cursor-pointer transition-colors"):
+                with ui.column().classes("gap-0"):
+                    ui.label(item["name"]).classes("text-sm")
+                    ui.label(item["mode"]).classes("text-xs opacity-40")
+                with ui.row().classes("gap-1"):
+                    ui.button("查看", icon="visibility", on_click=lambda item=item: view_result(item["output"])).props("flat size=sm dense")
+                    ui.button("打开", icon="folder_open", on_click=lambda item=item: open_result(item["output"])).props("flat size=sm dense")
+
+
+# ============ 结果详情 ============
+
+result_dialog = None
+
+
+def view_result(md_path: str):
+    """打开结果详情对话框"""
+    global CURRENT_RESULT, result_dialog
+    CURRENT_RESULT = md_path
+    if result_dialog:
+        result_dialog.delete()
+    with ui.dialog(value=True) as result_dialog:
+        with ui.card().classes("w-full max-w-2xl"):
+            with ui.row().classes("items-center justify-between w-full mb-4"):
+                ui.label(Path(md_path).name.replace("_", " ")).classes("text-h6")
+                ui.button(icon="close", on_click=result_dialog.close).props("flat size=sm dense")
+
+            data = read_result_preview(md_path)
+
+            tabs = ["全文"]
+            if data.get("has_summary"):
+                tabs.insert(0, "摘要")
+            if data.get("has_transcript"):
+                tabs.insert(1 if data.get("has_summary") else 0, "逐字稿")
+
+            with ui.tabs() as tab:
+                for t in tabs:
+                    ui.tab(t)
+
+            with ui.tab_panels(tab, value=tabs[0]).classes("w-full"):
+                for t in tabs:
+                    with ui.tab_panel(t).classes("w-full"):
+                        if t == "摘要":
+                            ui.label(data.get("summary", "")).classes("text-sm leading-6").style("white-space: pre-wrap;")
+                        elif t == "逐字稿":
+                            with ui.scroll_area().classes("w-full h-80"):
+                                ui.label(data.get("transcript", "")).classes("text-sm leading-6").style("white-space: pre-wrap;")
+                        else:  # 全文
+                            with ui.scroll_area().classes("w-full h-96"):
+                                ui.label(data.get("full_text", "")).classes("text-sm leading-6").style("white-space: pre-wrap;")
+
+            with ui.row().classes("justify-end gap-2 mt-4 pt-4 border-t border-[#e8e6e2]"):
+                ui.button("在访达中显示", icon="folder_open", on_click=lambda: open_result(md_path)).props("flat size=sm")
+                ui.button("导出到 Obsidian", icon="book", on_click=lambda: export_to_obsidian(md_path)).props("outline size=sm")
+
+
+def export_to_obsidian(md_path: str):
+    """导出到 Obsidian"""
+    src = Path(md_path)
+    if not src.exists():
+        ui.notify("文件不存在", type="negative")
+        return
+
+    vault = cfg.OBSIDIAN_VAULT
+    if not vault.exists():
+        ui.notify(f"找不到 Obsidian vault: {vault}", type="negative")
+        return
+
+    target_dir = vault / cfg.DEFAULT_OBSIDIAN_FOLDER
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / src.name
+
+    # 复制文件
+    import shutil
+    shutil.copy2(src, target)
+    ui.notify(f"已导出到 Obsidian：{cfg.DEFAULT_OBSIDIAN_FOLDER}", type="positive")
+
+
+# ============ 工具函数 ============
 
 def open_result(path: str):
     if path and Path(path).exists():
         subprocess.run(["open", "-R", str(path)])
-
-
-async def do_transcribe():
-    global PROCESSING, STEP_TEXT, STEP_PCT, RESULTS
-    print("[do_transcribe] 被调用", flush=True)
-    if not FILES:
-        ui.notify("请先添加视频", type="warning")
-        return
-    PROCESSING = True
-    RESULTS = []
-    STEP_TEXT = "准备中..."
-    STEP_PCT = 0
-    results_area.refresh()
-    try:
-        total = len(FILES)
-        for i, f in enumerate(FILES):
-            STEP_TEXT = f"[{i+1}/{total}] {f['name']}"
-            STEP_PCT = int(i / total * 100)
-            status_area.refresh()
-            result = await asyncio.to_thread(run_one, Path(f["path"]), "transcript", None, False)
-            RESULTS.append(result)
-            hist = app.storage.user.get("history", [])
-            hist.insert(0, {"name": f["name"], "mode": "转写", "output": result["output_path"]})
-            app.storage.user["history"] = hist[:50]
-            results_area.refresh()
-        STEP_PCT = 100
-        STEP_TEXT = "完成"
-        status_area.refresh()
-        ui.notify(f"完成 {total} 个", type="positive")
-    except Exception as ex:
-        STEP_TEXT = f"失败: {ex}"
-        status_area.refresh()
-        ui.notify(f"失败: {ex}", type="negative")
-    finally:
-        PROCESSING = False
-        status_area.refresh()
-
-
-async def do_deep():
-    global PROCESSING, STEP_TEXT, STEP_PCT, RESULTS, ENGINE, DEPTH
-    if not FILES:
-        ui.notify("请先添加视频", type="warning")
-        return
-    PROCESSING = True
-    RESULTS = []
-    STEP_TEXT = "准备中..."
-    STEP_PCT = 0
-    results_area.refresh()
-    try:
-        total = len(FILES)
-        for i, f in enumerate(FILES):
-            STEP_TEXT = f"[{i+1}/{total}] {f['name']}"
-            STEP_PCT = int(i / total * 100)
-            status_area.refresh()
-            result = await asyncio.to_thread(run_one, Path(f["path"]), "deep", ENGINE, DEPTH == "deep")
-            RESULTS.append(result)
-            hist = app.storage.user.get("history", [])
-            mode_label = f"拆解/{ENGINE}"
-            hist.insert(0, {"name": f["name"], "mode": mode_label, "output": result["output_path"]})
-            app.storage.user["history"] = hist[:50]
-            results_area.refresh()
-        STEP_PCT = 100
-        STEP_TEXT = "完成"
-        status_area.refresh()
-        ui.notify(f"完成 {total} 个", type="positive")
-    except Exception as ex:
-        STEP_TEXT = f"失败: {ex}"
-        status_area.refresh()
-        ui.notify(f"失败: {ex}", type="negative")
-    finally:
-        PROCESSING = False
-        status_area.refresh()
-
-
-# ============ 动态分区（只刷新这些小块） ============
-
-@ui.refreshable
-def files_area():
-    if not FILES:
-        return
-    with ui.column().classes("w-full gap-2"):
-        for i, f in enumerate(FILES):
-            with ui.row().classes("items-center justify-between w-full p-3 rounded bg-[#f7f5f1]"):
-                with ui.row().classes("items-center gap-3"):
-                    ui.icon("movie").props("size=sm").classes("opacity-40")
-                    with ui.column().classes("gap-0"):
-                        ui.label(f["name"]).classes("text-sm")
-                        ui.label(f"{f['size']:.1f} MB").classes("text-xs opacity-40")
-                ui.button(icon="close", on_click=lambda i=i: (remove_file(i), files_area.refresh())).props("flat size=sm dense").classes("opacity-40")
-
-
-@ui.refreshable
-def status_area():
-    if not PROCESSING:
-        return
-    with ui.column().classes("w-full gap-2 mt-4"):
-        ui.label(STEP_TEXT).classes("text-sm")
-        ui.linear_progress(value=STEP_PCT / 100).props("inset")
-
-
-@ui.refreshable
-def results_area():
-    if not RESULTS:
-        return
-    with ui.column().classes("w-full gap-3 mt-4"):
-        ui.label("结果").classes("text-sm font-medium")
-        for r in RESULTS:
-            with ui.row().classes("items-center justify-between w-full p-3 rounded bg-[#f7f5f1]"):
-                with ui.column().classes("gap-0"):
-                    ui.label(Path(r["file"]).name).classes("text-sm")
-                    ui.label(f"{len(r.get('segments', []))} 段").classes("text-xs opacity-40")
-                ui.button("在访达中显示", icon="folder_open", on_click=lambda r=r: open_result(r.get("output_path"))).props("flat size=sm")
-
-
-def render_upload_area():
-    async def on_upload(e):
-        content = await e.file.read()
-        add_file(e.file.name, content)
-        files_area.refresh()
-        ui.notify(f"已添加: {e.file.name}", type="info")
-
-    with ui.card().classes("w-full p-6"):
-        ui.label("添加视频").classes("text-sm font-medium mb-3")
-        ui.upload(label="拖拽视频文件到这里，或点击选择", auto_upload=True, multiple=True, on_upload=on_upload).props("flat bordered no-thumbnails").classes("w-full")
 
 
 # ============ 页面 ============
@@ -377,7 +530,7 @@ def render_upload_area():
 @ui.page("/")
 def index():
     ui.add_css(CSS)
-    # 品牌色（从根源覆盖 Quasar 蓝色）
+    ui.add_head_html('<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">')
     ui.colors(
         primary="#1a1a1a",
         secondary="#6a6a6a",
@@ -387,15 +540,11 @@ def index():
         negative="#a02020",
         warning="#8a6a20",
     )
-    # Material Icons 字体（Quasar 需要）
-    ui.add_head_html('<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">')
-    # Material Icons 在 NiceGUI 内置 fonts.css 中已加载，无需外链
 
-    # 启动时从 storage 加载配置（优先级高于 .env）
+    # 从 storage 加载配置
     _saved_cfg = app.storage.user.get("config", {})
     if _saved_cfg:
         cfg.set_gui_config(_saved_cfg)
-        # 重新加载 video2text 的配置变量
         import importlib
         importlib.reload(v2t)
 
@@ -404,11 +553,11 @@ def index():
         VIEW = v
         page_content.refresh()
 
-    # 顶栏（静态，不刷新）
+    # 顶栏
     with ui.column().classes("w-full min-h-screen"):
         with ui.row().classes("w-full items-center justify-between px-6 py-4 border-b border-[#e5e3df]"):
             with ui.row().classes("items-center gap-2"):
-                ui.icon("movie").props("size=sm").classes("opacity-60")
+                ui.icon("movie", size="sm").classes("opacity-60")
                 ui.label("VideoToText").classes("text-sm font-medium")
             with ui.row().classes("items-center gap-1"):
                 ui.button(icon="history", on_click=lambda: go("history")).props("flat size=sm dense")
@@ -418,13 +567,14 @@ def index():
             page_content()
 
         with ui.row().classes("w-full justify-center items-center gap-2 py-4 border-t border-[#e5e3df]"):
-            ui.label("v0.3").classes("text-xs opacity-40")
+            ui.label("v0.4").classes("text-xs opacity-40")
             ui.label("·").classes("text-xs opacity-20")
             ui.label("本地优先 · 数据不上传").classes("text-xs opacity-40")
 
 
 @ui.refreshable
 def page_content():
+
     # ===== 首页 =====
     if VIEW == "home":
         with ui.column().classes("w-full gap-8 mt-12"):
@@ -435,7 +585,7 @@ def page_content():
             with ui.row().classes("justify-center gap-6 w-full mt-4"):
                 with ui.card().classes("home-card w-72 p-6").on("click", lambda: (globals().update(VIEW="transcript"), page_content.refresh())):
                     with ui.column().classes("gap-4 w-full"):
-                        ui.icon("description").classes("home-card-icon")
+                        ui.icon("description", size="sm").classes("home-card-icon")
                         ui.label("逐字稿").classes("text-h6")
                         ui.label("快速把视频转成文字。支持 SRT / TXT / Markdown。本地跑，不花钱。").classes("text-sm opacity-60 leading-6")
                         with ui.row().classes("items-center gap-2 mt-auto"):
@@ -445,7 +595,7 @@ def page_content():
 
                 with ui.card().classes("home-card w-72 p-6").on("click", lambda: (globals().update(VIEW="deep"), page_content.refresh())):
                     with ui.column().classes("gap-4 w-full"):
-                        ui.icon("analytics").classes("home-card-icon")
+                        ui.icon("analytics", size="sm").classes("home-card-icon")
                         ui.label("深度拆解").classes("text-h6")
                         ui.label("完整分析视频内容。结构、情绪、金句、行动项，沉淀成知识。").classes("text-sm opacity-60 leading-6")
                         with ui.row().classes("items-center gap-2 mt-auto flex-wrap"):
@@ -464,54 +614,84 @@ def page_content():
     # ===== 逐字稿页 =====
     if VIEW == "transcript":
         ui.label("逐字稿").classes("text-h6 mb-4")
-        render_upload_area()
-        files_area()
+
+        # 上传区
         with ui.card().classes("w-full p-6"):
-            ui.label("导出设置").classes("text-sm font-medium mb-3")
-            with ui.row().classes("gap-6 flex-wrap"):
-                ui.switch("SRT 字幕", value=True)
-                ui.switch("TXT 纯文本", value=True)
-                ui.switch("带时间戳", value=True)
-        ui.button("开始转写", icon="play_arrow", on_click=do_transcribe).props("unelevated").classes("px-8 py-3")
-        status_area()
-        results_area()
+            ui.label("添加视频").classes("text-sm font-medium mb-3")
+            async def on_upload_transcript(e):
+                content = await e.file.read()
+                add_upload_file(e.file.name, content)
+                files_upload_area.refresh()
+            ui.upload(label="拖拽视频文件或文件夹到这里，或点击选择", auto_upload=True, multiple=True, on_upload=on_upload_transcript).props("flat bordered no-thumbnails").classes("w-full")
+
+        files_upload_area()
+
+        # 批量设置
+        if UPLOAD_TMP_FILES:
+            with ui.card().classes("w-full p-6"):
+                ui.label("导出设置").classes("text-sm font-medium mb-3")
+                with ui.row().classes("gap-6 flex-wrap"):
+                    ui.switch("SRT 字幕", value=True)
+                    ui.switch("TXT 纯文本", value=True)
+                    ui.switch("带时间戳", value=True)
+
+            ui.button(f"开始转写（{len(UPLOAD_TMP_FILES)} 个）", icon="play_arrow", on_click=lambda: start_batch("transcript")).props("unelevated").classes("px-8 py-3 mt-2")
+
+        queue_area()
+        history_area()
 
     # ===== 深度拆解页 =====
     if VIEW == "deep":
         ui.label("深度拆解").classes("text-h6 mb-4")
-        render_upload_area()
-        files_area()
 
-        def set_engine(e):
-            global ENGINE
-            ENGINE = e.value
-
-        def set_depth(e):
-            global DEPTH
-            DEPTH = e.value
-
+        # 上传区
         with ui.card().classes("w-full p-6"):
-            ui.label("拆解引擎").classes("text-sm font-medium mb-4")
-            ui.radio({
-                "doubao": "豆包视频理解 — 质量最高，理解动态画面和动作",
-                "frames": "关键帧 + VLM — 静态画面理解，便宜",
-                "local": "完全本地 — 不花钱，本地模型跑",
-            }, value=ENGINE, on_change=set_engine).props("inline label-color").classes("w-full")
+            ui.label("添加视频").classes("text-sm font-medium mb-3")
+            async def on_upload_deep(e):
+                content = await e.file.read()
+                add_upload_file(e.file.name, content)
+                files_upload_area.refresh()
+            ui.upload(label="拖拽视频文件或文件夹到这里，或点击选择", auto_upload=True, multiple=True, on_upload=on_upload_deep).props("flat bordered no-thumbnails").classes("w-full")
 
-            ui.separator().classes("my-4")
-            ui.label("拆解深度").classes("text-sm font-medium mb-3")
-            ui.toggle(["standard", "deep"], value=DEPTH, on_change=set_depth)
-            ui.label("标准：摘要+章节+金句 ｜ 深度：+叙事+新概念+反常识").classes("text-xs opacity-40")
+        files_upload_area()
 
-        with ui.expansion("高级选项", ).classes("w-full"):
-            with ui.column().classes("gap-4 w-full"):
-                ui.switch("说话人分离", value=False)
-                ui.switch("导出到 Obsidian", value=False)
+        if UPLOAD_TMP_FILES:
+            with ui.card().classes("w-full p-6"):
+                ui.label("拆解引擎").classes("text-sm font-medium mb-4")
 
-        ui.button("开始拆解", icon="play_arrow", on_click=do_deep).props("unelevated").classes("px-8 py-3")
-        status_area()
-        results_area()
+                def set_engine(e):
+                    global ENGINE
+                    ENGINE = e.value
+                ui.radio({
+                    "doubao": "豆包视频理解 — 质量最高，理解动态画面和动作",
+                    "frames": "关键帧 + VLM — 静态画面理解，便宜",
+                    "local": "完全本地 — 不花钱，本地模型跑",
+                }, value=ENGINE, on_change=set_engine).props("inline label-color").classes("w-full")
 
+                ui.separator().classes("my-4")
+                ui.label("拆解深度").classes("text-sm font-medium mb-3")
+
+                def set_depth(e):
+                    global DEPTH
+                    DEPTH = e.value
+                ui.toggle(["standard", "deep"], value=DEPTH, on_change=set_depth)
+                ui.label("标准：摘要+章节+金句 ｜ 深度：+叙事+新概念+反常识").classes("text-xs opacity-40")
+
+            with ui.expansion("高级选项", icon="settings").classes("w-full"):
+                with ui.column().classes("gap-4 w-full"):
+                    ui.switch("说话人分离", value=False)
+                    ui.switch("导出到 Obsidian", value=False)
+
+            ui.button(f"开始拆解（{len(UPLOAD_TMP_FILES)} 个）", icon="play_arrow", on_click=lambda: start_batch("deep")).props("unelevated").classes("px-8 py-3 mt-2")
+
+        queue_area()
+        history_area()
+
+    # ===== 历史页 =====
+    if VIEW == "history":
+        ui.label("历史记录").classes("text-h6 mb-1")
+        ui.label(f"共 {len(scan_output_dir())} 条").classes("text-xs opacity-40 mb-4")
+        history_area()
 
     # ===== 设置页 =====
     if VIEW == "settings":
@@ -519,17 +699,18 @@ def page_content():
         ui.label("配置保存到本地，不上传").classes("text-xs opacity-40 mb-4")
 
         def save_config():
-            """保存配置到 app.storage.user 并刷新 config 模块"""
             saved = {}
             for section in cfg.CONFIG_FIELDS:
                 for item in section["items"]:
                     key = item["key"]
                     val = input_refs[key].value
-                    if val:  # 只保存非空值
+                    if val:
                         saved[key] = val
             app.storage.user["config"] = saved
             cfg.set_gui_config(saved)
-            ui.notify("已保存，重新加载页面生效", type="positive")
+            import importlib
+            importlib.reload(v2t)
+            ui.notify("已保存，立即生效", type="positive")
 
         input_refs = {}
         current_cfg = app.storage.user.get("config", {})
@@ -540,9 +721,7 @@ def page_content():
                 with ui.column().classes("w-full gap-4"):
                     for item in section["items"]:
                         key = item["key"]
-                        # 显示值：优先从 storage 读，其次 env，最后默认
                         val = current_cfg.get(key, "") or cfg._get(key, item["default"])
-                        # 密码类型不显示真实值（显示占位符）
                         placeholder = "••••••••" if item["type"] == "password" and val else ""
                         inp = ui.input(
                             label=item["label"],
@@ -555,31 +734,26 @@ def page_content():
                         input_refs[key] = inp
 
         ui.button("保存设置", icon="save", on_click=save_config).props("unelevated").classes("px-8 py-3")
-        ui.label("重新加载页面后所有配置生效").classes("text-xs opacity-40 mt-2")
 
 
-    # ===== 历史页 =====
-    if VIEW == "history":
-        ui.label("历史记录").classes("text-h6 mb-1")
-        ui.label("最近 50 条").classes("text-xs opacity-40 mb-4")
-        hist = app.storage.user.get("history", [])
-        if not hist:
-            with ui.column().classes("items-center w-full py-16 gap-3"):
-                ui.label("暂无历史记录").classes("text-sm opacity-40")
-        else:
-            with ui.column().classes("w-full gap-2"):
-                for item in hist[:20]:
-                    with ui.row().classes("items-center justify-between w-full p-3 rounded bg-[#f7f5f1] hover:bg-[#f0eee9] cursor-pointer transition-colors"):
-                        with ui.column().classes("gap-0"):
-                            ui.label(item.get("name", "")).classes("text-sm")
-                            ui.label(item.get("mode", "")).classes("text-xs opacity-40")
-                        ui.button("打开", icon="open_in_new", on_click=lambda item=item: open_result(item.get("output"))).props("flat size=sm")
+# ============ 批量启动 ============
+
+def start_batch(mode: str):
+    """启动批量处理"""
+    engine = ENGINE if mode == "deep" else None
+    deep = DEPTH == "deep"
+    add_queue_files(mode, engine, deep)
+    ui.notify(f"已加入 {len([q for q in QUEUE if q['status'] == 'pending'])} 个任务到队列", type="info")
 
 
-# ============ 核心处理函数 ============
+# ============ 启动 ============
 
-def run_one(video_path: Path, mode: str, engine: str = None, deep: bool = False) -> dict:
-    """处理单个视频"""
+
+
+# ============ 单个视频处理 ============
+
+def process_single_video(video_path: Path, mode: str, engine: str = None, deep: bool = False) -> dict:
+    """处理单个视频，返回结果字典（兼容 GUI 显示）"""
     cache_key = v2t.file_hash(video_path)
     info = v2t.probe_video(video_path)
 
@@ -590,7 +764,7 @@ def run_one(video_path: Path, mode: str, engine: str = None, deep: bool = False)
     # 转写
     if info["has_audio"]:
         audio_path = v2t.extract_audio(video_path, cache_key)
-        transcript = v2t.transcribe(audio_path, cache_key, v2t.DEFAULT_WHISPER_MODEL)
+        transcript = v2t.transcribe(audio_path, cache_key, cfg.WHISPER_MODEL)
         segments = v2t.parse_segments(transcript)
 
     # 画面理解
@@ -623,6 +797,7 @@ def run_one(video_path: Path, mode: str, engine: str = None, deep: bool = False)
         mode_suffix += "-deep"
 
     output_md = v2t.OUTPUT_DIR / f"{video_path.stem}_{mode_suffix}.md"
+    output_json = v2t.OUTPUT_DIR / f"{video_path.stem}_{mode_suffix}.json"
     v2t.write_markdown_output(video_path, info, segments, summary, frames_desc, output_md)
 
     return {
@@ -635,7 +810,6 @@ def run_one(video_path: Path, mode: str, engine: str = None, deep: bool = False)
         "summary": summary,
         "output_path": str(output_md),
     }
-
 
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(

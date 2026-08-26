@@ -76,6 +76,19 @@ def file_hash(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()[:12]
 
+def audio_duration(audio_path: Path) -> float:
+    """拿音频时长（秒），用于估算转写耗时"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", str(audio_path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        info = json.loads(r.stdout)
+        return float(info.get("format", {}).get("duration", 0))
+    except Exception:
+        return 0
+
 def fmt_time(seconds: float) -> str:
     td = timedelta(seconds=int(seconds))
     total_seconds = int(td.total_seconds())
@@ -90,7 +103,7 @@ def fmt_time_hms(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 def run_cmd(cmd: list, **kwargs) -> subprocess.CompletedProcess:
-    timeout = kwargs.pop("timeout", 120)
+    timeout = kwargs.pop("timeout", 1800)  # 默认 30 分钟，长视频转写不超时
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
     if result.returncode != 0:
         print(f"  ✗ 命令失败: {' '.join(cmd[:3])}...")
@@ -214,6 +227,11 @@ def transcribe(audio_path: Path, cache_key: str, model: str) -> dict:
     
     output_prefix = CACHE_DIR / f"{cache_key}_{model_name}"
     
+    # 按音频大小估算转写超时: 1MB≈8s(留足余量), 最低 20 分钟, 兜底 60 分钟
+    audio_mb = audio_path.stat().st_size / 1024 / 1024
+    est = int(audio_mb * 8) + 120
+    est = max(1200, min(est, 3600))
+    
     run_cmd([
         WHISPER_CLI,
         "-m", str(model_file),
@@ -221,7 +239,7 @@ def transcribe(audio_path: Path, cache_key: str, model: str) -> dict:
         "-oj",
         "-of", str(output_prefix),
         "-l", "zh",
-    ])
+    ], timeout=est)
     
     json_files = sorted(CACHE_DIR.glob(f"{cache_key}_{model_name}*.json"))
     if not json_files:
@@ -899,13 +917,17 @@ def process_single(video_path: Path, args) -> tuple:
 # ============ 批量处理 ============
 
 def find_videos(input_path: Path) -> list:
-    """找到目录下所有视频文件"""
+    """找到目录下所有视频文件，跳过 macOS 资源分叉文件（._前缀）和小于 1MB 的垃圾文件"""
     videos = []
     for ext in sorted(VIDEO_EXTENSIONS):
         videos.extend(sorted(input_path.glob(f"*{ext}")))
         videos.extend(sorted(input_path.glob(f"*{ext.upper()}")))
-    # 去重
-    return list(dict.fromkeys(videos))
+    # 去重 + 过滤掉 ._ 开头的 macOS 资源分叉 + 小于 1MB 的文件
+    filtered = [
+        v for v in dict.fromkeys(videos)
+        if not v.name.startswith("._") and v.stat().st_size > 1 * 1024 * 1024
+    ]
+    return filtered
 
 def process_batch(input_dir: Path, args) -> list:
     """批量处理目录下的所有视频"""
