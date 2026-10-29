@@ -23,12 +23,15 @@ VideoToText 把视频转成**结构化文本**——不只是逐字稿，还有�
 ## 核心亮点
 
 - **本地优先**：所有数据存在本地，API Key 也是你自己的，不上传任何数据到第三方服务器
-- **三种引擎，按需切换**
-  - 豆包视频理解 — 质量最高，能理解动态画面和人物关系
-  - 关键帧 + VLM — 便宜，静态画面理解，适合 PPT 类视频
-  - 完全本地 — 不花钱，whisper.cpp 本地跑
+- **三种转写引擎，按需切换**：
+  - **SenseVoice（默认）** — 本地免费，中文准，长音频不重复字
+  - Whisper.cpp — 本地免费，备用
+  - 飞书妙记 — 免费额度，云端
+- **九宫格故事板** — 把视频抽成 3x3 分页图，带时间戳，一张图知道视频讲什么
+- **三种画面理解引擎**：豆包视频理解（质量最高）/ 关键帧+VLM（便宜）/ 完全本地
 - **批量处理**：拖一整个文件夹进去，自动排队，处理完自动导出
-- **GUI + CLI 双模式**：日常用图形界面，自动化用命令行
+- **分类资产目录**：每个视频一个文件夹，笔记/转写/故事板分类存放
+- **Agent CLI 接口**：别的 Agent（Codex/Claude Code/豆包）可通过 `cli.py --json` 调用
 - **Obsidian 原生导出**：直接写入你的 Vault，跟笔记体系无缝衔接
 - **缓存机制**：同一个视频不重复付费，结果本地缓存
 
@@ -93,18 +96,50 @@ python video2text.py --mode audio --deep --obsidian ~/Movies/课程/
 
 ---
 
-## 引擎对比
+## 转写引擎对比
 
-| 引擎 | 质量 | 速度 | 成本（1小时视频） | 能否看懂画面 |
-|------|------|------|------------------|-------------|
-| 豆包视频理解 | ⭐⭐⭐⭐⭐ | 中 | ¥2-5 | ✅ 动态画面 |
-| 关键帧 + VLM | ⭐⭐⭐ | 快 | ¥0.5-2 | ⚠️ 静态画面 |
-| 本地 Whisper | ⭐⭐ | 慢（看机器） | 免费 | ❌ 只有声音 |
+| 引擎 | 命令参数 | 大小 | 成本 | 中文质量 | 长音频重复字 |
+|------|---------|------|------|---------|-------------|
+| **whisper base（默认）** | `--asr whisper` | 141MB | 免费 | ⭐⭐⭐ | 无 |
+| sensevoice（增强） | `--asr sensevoice` | 893MB | 免费 | ⭐⭐⭐⭐ | 无 |
+| 飞书妙记 | `--asr minutes` | 云端 | 免费额度 | ⭐⭐⭐⭐ | 无 |
 
-**推荐**：
-- PPT/网课类 → 关键帧模式，便宜够用
-- 纪录片/故事类 → 豆包视频理解，能看懂画面
-- 敏感内容 / 不想花钱 → 本地模式
+**默认模式**：whisper base（141MB），下得快、简体、错字少、时间戳细
+**增强模式**：sensevoice（用户手动开启），标点好、流畅度高，但模型大
+
+## Agent CLI 接口（给别的 Agent 调用）
+
+```bash
+# 转写
+python3 cli.py transcribe video.mp4 --asr sensevoice --json
+
+# 九宫格故事板
+python3 cli.py storyboard video.mp4 --json
+
+# 完整管线
+python3 cli.py digest video.mp4 --category 课程 --json
+
+# 批量
+python3 cli.py batch ./input/ --category 课程 --json
+
+# 列出资产
+python3 cli.py list --json
+```
+
+所有命令加 `--json`，结果输出到 stdout，日志走 stderr，可直接被 Agent 解析。
+
+## 输出资产结构
+
+```
+output/
+  <分类>/
+    <视频名>/
+      <视频名>.md          # 笔记
+      <视频名>.json        # 结构化数据
+      transcript.json      # 转写 segments
+      storyboard_p01.jpg   # 九宫格故事板
+      storyboard_index.json
+```
 
 ---
 

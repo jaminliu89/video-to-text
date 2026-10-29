@@ -47,7 +47,7 @@ def get_gui_config() -> dict:
 # ===== 配置项 =====
 
 # 本地 Whisper
-WHISPER_MODEL = _get("WHISPER_MODEL", "small")
+WHISPER_MODEL = _get("WHISPER_MODEL", "base")
 WHISPER_CLI = _get("WHISPER_CLI", "whisper-cli")
 WHISPER_MODEL_DIR = Path(_get("WHISPER_MODEL_DIR", str(Path.home() / ".cache" / "whisper"))).expanduser()
 
