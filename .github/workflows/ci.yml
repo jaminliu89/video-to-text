@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Syntax check
+        run: |
+          python -m py_compile video2text.py
+          python -m py_compile config.py
+          python -m py_compile cli.py
+          python -m py_compile v2t/asr.py
+          python -m py_compile v2t/storyboard.py
+          python -m py_compile v2t/assets.py
+
+      - name: Import check
+        run: |
+          python -c "import config; print('config OK')"
+          python -c "import v2t.asr; print('asr OK')"
+          python -c "import v2t.storyboard; print('storyboard OK')"
+          python -c "import v2t.assets; print('assets OK')"
