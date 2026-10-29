@@ -30,6 +30,9 @@ TOTAL_PROGRESS = 0
 
 # 引擎和深度
 ENGINE = "doubao"
+ASR_ENGINE = "faster-whisper"  # 转写引擎：faster-whisper/whisper/sensevoice
+WITH_STORYBOARD = True  # 是否生成九宫格故事板
+CATEGORY = "未分类"    # 资产分类
 DEPTH = "standard"
 
 
@@ -669,6 +672,18 @@ def page_content():
                 }, value=ENGINE, on_change=set_engine).props("inline label-color").classes("w-full")
 
                 ui.separator().classes("my-4")
+                ui.label("转写引擎（音频转文字）").classes("text-sm font-medium mb-3")
+
+                def set_asr(e):
+                    global ASR_ENGINE
+                    ASR_ENGINE = e.value
+                ui.radio({
+                    "faster-whisper": "faster-whisper — 本地免费，快，不重复",
+                    "whisper": "whisper.cpp — 本地免费，Metal 加速",
+                    "sensevoice": "sensevoice — 本地免费，标点好（需 funasr）",
+                }, value=ASR_ENGINE, on_change=set_asr).props("inline label-color").classes("w-full")
+
+                ui.separator().classes("my-4")
                 ui.label("拆解深度").classes("text-sm font-medium mb-3")
 
                 def set_depth(e):
@@ -679,6 +694,8 @@ def page_content():
 
             with ui.expansion("高级选项", icon="settings").classes("w-full"):
                 with ui.column().classes("gap-4 w-full"):
+                    ui.switch("生成九宫格故事板", value=True, on_change=lambda e: globals().update(WITH_STORYBOARD=e.value))
+                    ui.input("资产分类目录", value="未分类", on_change=lambda e: globals().update(CATEGORY=e.value)).classes("w-full")
                     ui.switch("说话人分离", value=False)
                     ui.switch("导出到 Obsidian", value=False)
 
@@ -814,7 +831,7 @@ def process_single_video(video_path: Path, mode: str, engine: str = None, deep: 
 if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
         title="VideoToText",
-        port=0,
+        port=8766,
         show=False,
         dark=False,
         native=False,
