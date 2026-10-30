@@ -76,6 +76,16 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # 关键帧数（关键帧模式）
 DEFAULT_FRAME_COUNT = int(_get("FRAME_COUNT", "8"))
 
+# 蒸馏模式专用 LLM（OpenAI 兼容端点）
+# 留空则自动回落：硅基流动 → 火山方舟。适合用 Gemini / DeepSeek / 本地 vLLM 等
+DISTILL_LLM_BASE = _get("DISTILL_LLM_BASE", "")
+DISTILL_LLM_KEY = _get("DISTILL_LLM_KEY", "")
+DISTILL_LLM_MODEL = _get("DISTILL_LLM_MODEL", "")
+# 思维链开关：auto=抽取类关、抽象类开；off=全关（快 3-5 倍）；on=全开
+DISTILL_THINKING = _get("DISTILL_THINKING", "auto")
+# 热词纠正表："错词=正词,错词2=正词2"（修中文 ASR 的专有名词误听）
+DISTILL_HOTWORDS = _get("DISTILL_HOTWORDS", "")
+
 
 def all_config_dict() -> dict:
     """返回所有配置（用于设置页显示）"""
@@ -88,6 +98,10 @@ def all_config_dict() -> dict:
         "ARK_API_KEY": mask_key(ARK_API_KEY),
         "ARK_BASE": ARK_BASE,
         "ARK_VIDEO_ENDPOINT": ARK_VIDEO_ENDPOINT,
+        "DISTILL_LLM_BASE": DISTILL_LLM_BASE,
+        "DISTILL_LLM_KEY": mask_key(DISTILL_LLM_KEY),
+        "DISTILL_LLM_MODEL": DISTILL_LLM_MODEL,
+        "DISTILL_THINKING": DISTILL_THINKING,
         "OBSIDIAN_VAULT": str(OBSIDIAN_VAULT),
         "OBSIDIAN_FOLDER": DEFAULT_OBSIDIAN_FOLDER,
         "CACHE_DIR": str(CACHE_DIR),
@@ -127,6 +141,16 @@ CONFIG_FIELDS = [
             {"key": "ARK_API_KEY", "label": "API Key", "type": "password", "default": ""},
             {"key": "ARK_BASE", "label": "API 地址", "type": "text", "default": "https://ark.cn-beijing.volces.com/api/v3"},
             {"key": "ARK_VIDEO_ENDPOINT", "label": "视频模型 Endpoint ID", "type": "text", "default": ""},
+        ],
+    },
+    {
+        "section": "蒸馏模式（第三个模式用的 LLM）",
+        "items": [
+            {"key": "DISTILL_LLM_BASE", "label": "API 地址（OpenAI 兼容，留空自动回落）", "type": "text", "default": ""},
+            {"key": "DISTILL_LLM_KEY", "label": "API Key", "type": "password", "default": ""},
+            {"key": "DISTILL_LLM_MODEL", "label": "模型名", "type": "text", "default": ""},
+            {"key": "DISTILL_THINKING", "label": "思维链（auto/off/on）", "type": "text", "default": "auto"},
+            {"key": "DISTILL_HOTWORDS", "label": "热词纠正（错=对,错2=对2）", "type": "text", "default": ""},
         ],
     },
     {

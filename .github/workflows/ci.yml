@@ -30,6 +30,9 @@ jobs:
           python -m py_compile v2t/asr.py
           python -m py_compile v2t/storyboard.py
           python -m py_compile v2t/assets.py
+          python -m py_compile v2t/ffmpeg.py
+          python -m py_compile v2t/distill.py
+          python -m py_compile v2t/distill_prompts.py
 
       - name: Import check
         run: |
@@ -37,3 +40,13 @@ jobs:
           python -c "import v2t.asr; print('asr OK')"
           python -c "import v2t.storyboard; print('storyboard OK')"
           python -c "import v2t.assets; print('assets OK')"
+          python -c "import v2t.ffmpeg; print('ffmpeg OK')"
+          python -c "import v2t.distill; print('distill OK')"
+
+      - name: Unit tests (distill)
+        run: python tests/test_distill_units.py
+
+      - name: CLI help
+        run: |
+          python cli.py --help
+          python cli.py distill --help
