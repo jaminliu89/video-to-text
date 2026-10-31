@@ -34,7 +34,12 @@ echo "▸ 校验 ${DMG}（$(du -h "$DMG" | cut -f1)）"
 MP="$(mktemp -d)"
 APP_PID=""
 cleanup() {
-  [[ -n "$APP_PID" ]] && kill "$APP_PID" 2>/dev/null || true
+  if [[ -n "$APP_PID" ]]; then
+    # 先 kill 再 wait：不 wait 的话 bash 会在脚本结束后甩一行 "Terminated: 15"，
+    # 看着像失败，其实是我们自己收的尾巴
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+  fi
   hdiutil detach "$MP" -quiet 2>/dev/null || true
 }
 trap cleanup EXIT
