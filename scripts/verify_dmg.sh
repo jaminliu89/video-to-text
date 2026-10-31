@@ -69,6 +69,8 @@ echo "  ✓ ffmpeg 静态链接，可分发"
 # ---------- 4. 真的启动一次 ----------
 echo "▸ 从挂载点启动 App（端口 ${PORT}）…"
 # 清掉上次的日志，免得把旧的成功记录当成这次的结果
+# （CI 上是干净机器，这个目录还不存在，先建出来）
+mkdir -p "$(dirname "$LOG")"
 : > "$LOG" 2>/dev/null || true
 
 V2T_SHOW=0 V2T_PORT="$PORT" "$APP/Contents/MacOS/VideoToText" > /tmp/v2t-boot.log 2>&1 &
