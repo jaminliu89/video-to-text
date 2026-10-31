@@ -9,7 +9,12 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).parent
+# .app 打包后应用目录只读：用户配置放可写目录
+_USER_HOME = Path(os.environ.get("VIDEOTOTEXT_HOME")
+                  or (Path.home() / "Library" / "Application Support" / "VideoToText"))
 ENV_PATH = BASE_DIR / ".env"
+if not ENV_PATH.exists() and (_USER_HOME / ".env").exists():
+    ENV_PATH = _USER_HOME / ".env"
 
 # 从 .env 文件读取（不写入 os.environ，避免污染）
 _ENV_FILE: dict[str, str] = {}
