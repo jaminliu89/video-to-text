@@ -155,6 +155,7 @@ jobs:
   # 4) macOS 安装包：PR 阶段就真打一次 DMG 并启动它
   #    release.yml 只在打 tag 时跑，这里补上"合并前就知道能不能装"。
   #    用的是同一个 scripts/verify_dmg.sh，断言不会两边跑偏。
+  #    两个变体（浏览器版 / 原生窗口版）都在这里打并验，避免"窗口版只在发版时才第一次被打包"。
   dmg:
     needs: [check]
     runs-on: macos-14   # arm64
@@ -172,12 +173,12 @@ jobs:
           # App 只用 faster-whisper；spec 里已排除 torch/transformers/mlx
           pip install -r requirements.txt pyinstaller
 
-      - name: Build .app + DMG
+      - name: Build .app + DMG（browser + native 两个变体）
         run: |
           chmod +x scripts/build_dmg.sh
           bash scripts/build_dmg.sh
 
-      - name: 校验 DMG（挂载 + 静态链接 + 真的启动一次）
+      - name: 校验 DMG（挂载 + 静态链接 + 依赖自检 + 真的启动一次）
         run: |
           chmod +x scripts/verify_dmg.sh
           bash scripts/verify_dmg.sh
