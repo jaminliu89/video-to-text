@@ -49,12 +49,12 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-echo "▸ 分支 $BRANCH"
+echo "▸ 分支 ${BRANCH}"
 
 # ---------- 1. 拉取 ----------
 if git remote get-url origin >/dev/null 2>&1; then
   echo "▸ 拉取远端更新…"
-  if git pull --rebase --autostash origin "$BRANCH" 2>&1 | sed 's/^/  /'; then
+  if git pull --rebase --autostash origin "${BRANCH}" 2>&1 | sed 's/^/  /'; then
     :
   else
     echo "✗ 拉取失败（可能有冲突）。已用 --autostash，本地改动还在工作区。" >&2
@@ -85,8 +85,8 @@ fi
 
 # ---------- 3. 推送 ----------
 if git remote get-url origin >/dev/null 2>&1; then
-  echo "▸ 推送到 origin/$BRANCH…"
-  git push -q origin "$BRANCH"
+  echo "▸ 推送到 origin/${BRANCH}…"
+  git push -q origin "${BRANCH}"
   echo "✓ 已推送：$(git log --oneline -1)"
 else
   echo "· 没有 origin 远端，跳过推送"
