@@ -135,74 +135,10 @@ jobs:
           chmod +x scripts/build_dmg.sh
           bash scripts/build_dmg.sh
 
-      - name: Verify DMG
+      - name: 校验 DMG（挂载 + 静态链接 + 真的启动一次）
         run: |
-          set -euo pipefail
-          DMG="$(ls dist/*.dmg | head -1)"
-          echo "DMG: $DMG ($(du -h "$DMG" | cut -f1))"
-          MP="$(mktemp -d)"
-          hdiutil attach "$DMG" -mountpoint "$MP" -nobrowse -quiet
-          test -d "$MP/VideoToText.app" || { echo "✗ DMG 里没有 App"; exit 1; }
-          test -L "$MP/Applications" || { echo "✗ 缺少 Applications 软链"; exit 1; }
-          test -x "$MP/VideoToText.app/Contents/MacOS/VideoToText" || { echo "✗ 主程序不可执行"; exit 1; }
-          # 源码不在磁盘上（打进 PYZ 了），改用这些标志物确认打包完整
-          test -f "$MP/VideoToText.app/Contents/Frameworks/base_library.zip" \
-            || { echo "✗ 缺 base_library.zip，打包不完整"; exit 1; }
-          test -f "$MP/VideoToText.app/Contents/Resources/VERSION" \
-            || { echo "✗ 缺 VERSION"; exit 1; }
-          echo "App 内版本：$(cat "$MP/VideoToText.app/Contents/Resources/VERSION")"
-          BIN="$(find "$MP/VideoToText.app/Contents" -name ffmpeg -type f | head -1)"
-          test -n "$BIN" || { echo "✗ App 里没有 ffmpeg"; exit 1; }
-          "$BIN" -version | head -1
-          # 必须是静态链接：动态链接到 /opt/homebrew 的包换台机器就废了
-          if otool -L "$BIN" | grep -q "/opt/homebrew\|/usr/local/opt"; then
-            echo "✗ ffmpeg 是动态链接的，不能分发"; otool -L "$BIN"; exit 1
-          fi
-          du -sh "$MP/VideoToText.app"
-          hdiutil detach "$MP" -quiet
-
-      - name: Smoke test App（真的启动一次）
-        run: |
-          set -euo pipefail
-          APP="dist/VideoToText.app"
-          # launcher 会把 stdout/stderr 重定向到 ~/Library/.../app.log（窗口模式没终端），
-          # 所以这里的 /tmp/app.log 只兜底 PyInstaller bootloader 自己的输出
-          V2T_SHOW=0 "$APP/Contents/MacOS/VideoToText" > /tmp/boot.log 2>&1 &
-          PID=$!
-          LOG="$HOME/Library/Application Support/VideoToText/app.log"
-          ok=0
-          for i in $(seq 1 60); do
-            code="$(curl -s -o /tmp/page.html -w '%{http_code}' http://127.0.0.1:8766/ || true)"
-            if [ "$code" = "200" ]; then ok=1; break; fi
-            sleep 1
-          done
-
-          # 回归测试：曾经因为没调 multiprocessing.freeze_support()，每个 tracker 子进程
-          # 都会把整个 App 再启动一遍，几十个进程无限复制、互相抢端口。
-          N="$(pgrep -f "VideoToText.app/Contents/MacOS" | wc -l | tr -d ' ')"
-          echo "进程数：$N"
-
-          if [ "$ok" != "1" ]; then
-            echo "✗ App 起不来（HTTP=${code:-none}）"
-            echo "--- boot.log ---"; tail -40 /tmp/boot.log
-            echo "--- app.log ---"; tail -60 "$LOG" 2>/dev/null || echo "(没有 app.log)"
-            kill "$PID" 2>/dev/null || true
-            exit 1
-          fi
-          grep -q "蒸馏" /tmp/page.html || { echo "✗ 首页内容不对"; head -20 /tmp/page.html; kill "$PID" 2>/dev/null || true; exit 1; }
-
-          # 正常是 2 个：主进程 + multiprocessing 的 resource_tracker。
-          # 曾经的 bug 会涨到几十上百个，所以 5 作为上限足够宽松又能抓住回归。
-          if [ "$N" -gt 5 ]; then
-            echo "✗ 进程数异常（$N），疑似 multiprocessing 子进程把 App 又启动了一遍"
-            tail -40 "$LOG" 2>/dev/null || true
-            kill "$PID" 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "--- app.log ---"; cat "$LOG" 2>/dev/null || true
-          kill "$PID" 2>/dev/null || true
-          echo "✓ App 启动正常，首页可访问（含第三模式），进程数 $N"
+          chmod +x scripts/verify_dmg.sh
+          bash scripts/verify_dmg.sh
 
       - name: Upload DMG to Release
         env:

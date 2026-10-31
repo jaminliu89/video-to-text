@@ -1062,7 +1062,8 @@ def run_app():
         title="VideoToText",
         # 只监听回环地址：这是个本地工具，没有理由把 8766 端口暴露到局域网
         host="127.0.0.1",
-        port=8766,
+        # 端口冲突时可以用 V2T_PORT 换一个（冒烟测试也靠它避开已有实例）
+        port=int(os.environ.get("V2T_PORT", "8766")),
         show=os.environ.get("V2T_SHOW") == "1",  # .app 里自动打开浏览器
         dark=False,
         # 千万别传 window_size / fullscreen / frameless：

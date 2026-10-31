@@ -151,3 +151,41 @@ jobs:
             dist/SHA256SUMS.txt
           retention-days: 30
           if-no-files-found: error
+
+  # 4) macOS 安装包：PR 阶段就真打一次 DMG 并启动它
+  #    release.yml 只在打 tag 时跑，这里补上"合并前就知道能不能装"。
+  #    用的是同一个 scripts/verify_dmg.sh，断言不会两边跑偏。
+  dmg:
+    needs: [check]
+    runs-on: macos-14   # arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          # App 只用 faster-whisper；spec 里已排除 torch/transformers/mlx
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build .app + DMG
+        run: |
+          chmod +x scripts/build_dmg.sh
+          bash scripts/build_dmg.sh
+
+      - name: 校验 DMG（挂载 + 静态链接 + 真的启动一次）
+        run: |
+          chmod +x scripts/verify_dmg.sh
+          bash scripts/verify_dmg.sh
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: video2text-dmg-preview
+          path: dist/*.dmg
+          retention-days: 14
+          if-no-files-found: error

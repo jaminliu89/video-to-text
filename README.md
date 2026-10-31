@@ -266,6 +266,7 @@ launchctl load ~/Library/LaunchAgents/com.video2text.sync.plist
 ```bash
 scripts/build_release.sh     # 源码包：dist/*.tar.gz / *.zip / SHA256SUMS.txt
 scripts/build_dmg.sh         # macOS 安装包：dist/VideoToText-<版本>-<arch>.dmg
+scripts/verify_dmg.sh        # 验收 DMG：挂载 → 查结构/静态 ffmpeg → 真的启动一次
 ```
 
 `build_dmg.sh` 会做四件事：PyInstaller 打成 `VideoToText.app`（one-dir，冷启动 ~2s）→
@@ -286,8 +287,9 @@ CI 会自动做三件事：
 | 触发 | 动作 |
 |---|---|
 | PR / push main | Linux + macOS(arm64) 双平台检查 → 通过后构建源码包并上传 artifact |
+| PR / push main | macOS 上打 DMG → `verify_dmg.sh`（挂载 / 静态链接 / **真的启动一次**）→ 上传 artifact |
 | push tag `v*` | 冒烟测试 → 构建源码包 → 创建 GitHub Release |
-| push tag `v*` | macOS 上打 DMG → 校验静态链接 → **真的启动一次 App** 并访问首页 → 附到 Release |
+| push tag `v*` | 打 DMG → 同一套验收 → 附到 Release |
 
 发版：`git tag v0.5.2 && git push origin v0.5.2`
 
