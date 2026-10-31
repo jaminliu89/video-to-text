@@ -39,7 +39,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-hdiutil attach "$DMG" -mountpoint "$MP" -nobrowse -quiet
+# 上次运行被打断（比如 Ctrl-C 或 App 还占着挂载点）会留下一个 attached 的镜像，
+# 再挂就报 "资源忙"，而且报错被 -quiet 吞掉，看起来像脚本莫名其妙退出。
+DMG_ABS="$(cd "$(dirname "$DMG")" && pwd)/$(basename "$DMG")"
+STALE="$(hdiutil info 2>/dev/null | awk -v p="$DMG_ABS" '
+  /^image-path/ { cur = $3; next }
+  /^\/dev\/disk/ { if (cur == p) { print $1; exit } }
+')"
+if [[ -n "$STALE" ]]; then
+  echo "  · 清理上次残留的挂载 ${STALE}" >&2
+  hdiutil detach "$STALE" -force -quiet 2>/dev/null || true
+fi
+
+hdiutil attach "$DMG" -mountpoint "$MP" -nobrowse -quiet \
+  || { echo "✗ 挂载失败（镜像可能正被占用）" >&2; exit 1; }
 
 # ---------- 1. 结构 ----------
 APP="$MP/VideoToText.app"
