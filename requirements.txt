@@ -1,4 +1,14 @@
+# 核心依赖
 nicegui>=3.16.0
 openai>=1.30.0
 httpx>=0.27.0
 httpx-sse>=0.4.0
+
+# 九宫格故事板（v2t/storyboard.py）
+Pillow>=10.0.0
+
+# 音频处理 + 默认转写引擎（v2t/asr.py 的 faster-whisper 分支）
+numpy>=1.24.0
+faster-whisper>=1.0.0
+
+# 注意：ffmpeg / ffprobe 需要系统安装（brew install ffmpeg），不是 pip 包

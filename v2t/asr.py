@@ -27,15 +27,22 @@ SENSEVOICE_VENV_PY = "/Users/kimliu/Projects/sensevoice-local/.venv/bin/python"
 SENSEVOICE_WORKER = Path(__file__).parent / "workers" / "sensevoice_worker.py"
 
 
-def transcribe(audio_path: Path, cache_key: str, engine: str = "faster-whisper") -> list:
-    """统一转写入口，返回 segments 列表"""
-    cache_file = CACHE_DIR / f"{cache_key}_asr_{engine}.json"
+def transcribe(audio_path: Path, cache_key: str, engine: str = "faster-whisper",
+               model_size: str = None) -> list:
+    """统一转写入口，返回 segments 列表
+
+    model_size 只对 faster-whisper 生效（tiny/base/small/medium/large-v3/large-v3-turbo），
+    默认取 cfg.WHISPER_MODEL。不同模型分开缓存，换模型不会串结果。
+    """
+    model_size = model_size or cfg.WHISPER_MODEL
+    suffix = f"{engine}-{model_size}" if engine == "faster-whisper" else engine
+    cache_file = CACHE_DIR / f"{cache_key}_asr_{suffix}.json"
     if cache_file.exists():
-        print(f"  ✓ 转写已缓存 ({engine})")
+        print(f"  ✓ 转写已缓存 ({suffix})")
         return json.loads(cache_file.read_text())
 
     if engine == "faster-whisper":
-        segments = _transcribe_faster_whisper(audio_path, cache_key)
+        segments = _transcribe_faster_whisper(audio_path, cache_key, model_size)
     elif engine == "whisper":
         segments = _transcribe_whisper(audio_path, cache_key)
     elif engine == "sensevoice":
@@ -199,22 +206,49 @@ def _transcribe_minutes(audio_path: Path, cache_key: str) -> list:
     return segments
 
 
+def _read_wav_mono(audio_path: Path):
+    """读 wav 成 16k 单声道 float32 numpy 数组
+
+    优先用标准库 wave（零依赖）；scipy 只作为兜底。
+    之前这里直接 import scipy，而 requirements.txt 里并没有 scipy，
+    导致默认引擎在干净环境里直接崩 —— 属于隐性依赖，这里去掉。
+    """
+    import numpy as np
+
+    try:
+        import wave
+        with wave.open(str(audio_path), "rb") as w:
+            ch = w.getnchannels()
+            sw = w.getsampwidth()
+            raw = w.readframes(w.getnframes())
+        if sw == 2:
+            data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        elif sw == 4:
+            data = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+        else:  # 8-bit 无符号
+            data = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+        if ch > 1:
+            data = data.reshape(-1, ch).mean(axis=1)
+        return data
+    except Exception:
+        from scipy.io import wavfile  # 兜底（未安装时才会走到这里）
+        _, data = wavfile.read(str(audio_path))
+        if data.dtype == np.int16:
+            data = data.astype(np.float32) / 32768.0
+        else:
+            data = data.astype(np.float32)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        return data
+
+
 def _transcribe_faster_whisper(audio_path: Path, cache_key: str, model_size: str = "base") -> list:
     """faster-whisper（CTranslate2 后端，比 whisper.cpp 快 2-4 倍）"""
     from faster_whisper import WhisperModel
-    import numpy as np
-    from scipy.io import wavfile
 
     print(f"  → faster-whisper 转写 ({model_size})...", end=" ", flush=True)
 
-    # 用 scipy 读 wav 成 numpy array（绕过 PyAV 兼容问题）
-    sr, data = wavfile.read(str(audio_path))
-    if data.dtype == np.int16:
-        audio_np = data.astype(np.float32) / 32768.0
-    else:
-        audio_np = data.astype(np.float32)
-    if audio_np.ndim > 1:
-        audio_np = audio_np.mean(axis=1)
+    audio_np = _read_wav_mono(audio_path)
 
     # Mac 上用 CPU（CTranslate2 不支持 MPS），int8 量化省内存
     model = WhisperModel(model_size, device="cpu", compute_type="int8")

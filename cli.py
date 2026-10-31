@@ -18,6 +18,9 @@ cli.py — video2text 的 Agent 调用入口
   # 批量处理目录
   python cli.py batch ./input/ --category 课程 --json
 
+  # 蒸馏整个文件夹（第三模式：去重 + 合并 + 方法论 + 产品逆向）
+  python cli.py distill ~/Movies/某门课/ --category 课程 --json
+
   # 列出资产
   python cli.py list --category 课程 --json
 
@@ -35,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config as cfg
 from v2t import asr, storyboard, assets
+from v2t import ffmpeg as ff
 
 
 def out_json(data, as_json: bool):
@@ -59,16 +63,10 @@ def cmd_transcribe(args):
     if not video_path.exists():
         out_json({"error": f"找不到: {video_path}"}, args.json); sys.exit(1)
 
-    # 抽音频（复用 video2text 的逻辑）
-    import subprocess
     cache_key = video_path.stem
     audio_path = cfg.CACHE_DIR / f"{cache_key}_audio.wav"
     if not audio_path.exists():
-        subprocess.run([
-            "ffmpeg", "-y", "-i", str(video_path),
-            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-            str(audio_path)
-        ], check=True, capture_output=True)
+        ff.extract_audio(video_path, audio_path)
 
     segments = asr.transcribe(audio_path, cache_key, args.asr)
 
@@ -116,15 +114,10 @@ def cmd_digest(args):
     video_info = probe_video(video_path)
 
     # 1. 转写
-    import subprocess
     cache_key = video_path.stem
     audio_path = cfg.CACHE_DIR / f"{cache_key}_audio.wav"
     if not audio_path.exists():
-        subprocess.run([
-            "ffmpeg", "-y", "-i", str(video_path),
-            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-            str(audio_path)
-        ], check=True, capture_output=True)
+        ff.extract_audio(video_path, audio_path)
 
     segments = asr.transcribe(audio_path, cache_key, args.asr)
     assets.save_transcript(asset_dir, segments)
@@ -203,6 +196,41 @@ def cmd_list(args):
     out_json({"count": len(summaries), "assets": summaries}, args.json)
 
 
+def cmd_distill(args):
+    """第三模式：蒸馏整个文件夹
+
+    固定八阶段：采集 → 去重 → 转写 → 合并 → 深读 → 综合 → 方法论 → 产品逆向 → 产出
+    进度日志走 stderr，最终结果走 stdout（--json 时是 JSON）。
+    """
+    from v2t import distill
+
+    folder = Path(args.input).expanduser().resolve()
+    if not folder.is_dir():
+        out_json({"error": f"不是目录: {folder}"}, args.json); sys.exit(1)
+
+    def log(msg=""):
+        print(msg, file=sys.stderr, flush=True)
+
+    try:
+        result = distill.run_distill(
+            folder=folder,
+            category=args.category,
+            batch=args.name,
+            asr_engine=args.asr,
+            whisper_model=args.whisper_model,
+            use_llm=not args.no_llm,
+            max_videos=args.max_videos,
+            resume=not args.fresh,
+            concurrency=args.concurrency,
+            hotwords=args.hotwords,
+            log=log,
+        )
+    except Exception as e:
+        out_json({"error": str(e)}, args.json); sys.exit(1)
+
+    out_json(result, args.json)
+
+
 def cmd_info(args):
     """读取某个资产"""
     asset_dir = Path(args.input).expanduser().resolve()
@@ -244,6 +272,30 @@ def main():
     p_batch.add_argument("input", help="目录路径")
     add_common(p_batch)
     p_batch.set_defaults(func=cmd_batch)
+
+    p_distill = sub.add_parser(
+        "distill",
+        help="第三模式：蒸馏整个文件夹（去重 + 合并 + 方法论 + 产品逆向）",
+    )
+    p_distill.add_argument("input", help="文件夹路径（可含子目录）")
+    p_distill.add_argument("--asr", default="faster-whisper",
+                           choices=["faster-whisper", "whisper", "sensevoice", "minutes"],
+                           help="转写引擎")
+    p_distill.add_argument("--whisper-model", default=None,
+                           choices=["tiny", "base", "small", "medium",
+                                    "large-v3", "large-v3-turbo"],
+                           help="faster-whisper 模型大小（默认取 WHISPER_MODEL，base 最快）")
+    p_distill.add_argument("--category", default="未分类", help="资产分类目录")
+    p_distill.add_argument("--name", default=None, help="批次名（默认用文件夹名）")
+    p_distill.add_argument("--max-videos", type=int, default=None, help="只跑前 N 个视频（试跑用）")
+    p_distill.add_argument("--no-llm", action="store_true", help="跳过 LLM，只做去重+转写+合并")
+    p_distill.add_argument("--concurrency", type=int, default=3,
+                           help="LLM 并发数（网络 IO，默认 3）")
+    p_distill.add_argument("--hotwords", default="",
+                           help='热词纠正表，如 "新约写作=星月写作,新约=星月"（修 ASR 专名误听）')
+    p_distill.add_argument("--fresh", action="store_true", help="忽略缓存，全部重跑")
+    p_distill.add_argument("--json", action="store_true", help="JSON 输出到 stdout")
+    p_distill.set_defaults(func=cmd_distill)
 
     p_list = sub.add_parser("list", help="列出资产")
     p_list.add_argument("--category", default=None, help="按分类筛选")
