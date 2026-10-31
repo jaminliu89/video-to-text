@@ -41,6 +41,10 @@ from v2t import asr, storyboard, assets
 from v2t import ffmpeg as ff
 
 
+ASR_ENGINES = ["faster-whisper", "mlx-whisper", "qwen3-asr",
+               "whisper", "sensevoice", "minutes"]
+
+
 def out_json(data, as_json: bool):
     """统一输出"""
     if as_json:
@@ -68,7 +72,8 @@ def cmd_transcribe(args):
     if not audio_path.exists():
         ff.extract_audio(video_path, audio_path)
 
-    segments = asr.transcribe(audio_path, cache_key, args.asr)
+    segments = asr.transcribe(audio_path, cache_key, args.asr,
+                              model_size=getattr(args, "asr_model", None))
 
     # 保存到资产目录
     asset_dir = assets.get_asset_dir(video_path, args.category)
@@ -119,7 +124,8 @@ def cmd_digest(args):
     if not audio_path.exists():
         ff.extract_audio(video_path, audio_path)
 
-    segments = asr.transcribe(audio_path, cache_key, args.asr)
+    segments = asr.transcribe(audio_path, cache_key, args.asr,
+                              model_size=getattr(args, "asr_model", None))
     assets.save_transcript(asset_dir, segments)
 
     # 2. 故事板
@@ -217,7 +223,7 @@ def cmd_distill(args):
             category=args.category,
             batch=args.name,
             asr_engine=args.asr,
-            whisper_model=args.whisper_model,
+            whisper_model=args.asr_model,
             use_llm=not args.no_llm,
             max_videos=args.max_videos,
             resume=not args.fresh,
@@ -229,6 +235,20 @@ def cmd_distill(args):
         out_json({"error": str(e)}, args.json); sys.exit(1)
 
     out_json(result, args.json)
+
+
+def cmd_engines(args):
+    """列出转写引擎及可用性（装了什么、还缺什么）"""
+    rows = asr.list_engines()
+    if args.json:
+        out_json({"engines": rows}, True)
+        return
+    print(f"{'引擎':<16}{'可用':<6}{'默认模型':<18}{'说明'}")
+    print("-" * 78)
+    for r in rows:
+        ok = "✓" if r["available"] else "✗"
+        note = r["reason"] or ("Metal GPU" if r["gpu"] else (r.get("channel") or ""))
+        print(f"{r['engine']:<16}{ok:<6}{r['default_model']:<18}{note}")
 
 
 def cmd_info(args):
@@ -245,9 +265,10 @@ def main():
 
     # 公共参数
     def add_common(p):
-        p.add_argument("--asr", default="faster-whisper",
-                       choices=["faster-whisper", "whisper", "sensevoice", "minutes"],
-                       help="转写引擎（默认 faster-whisper，CTranslate2 快 2-4 倍）")
+        p.add_argument("--asr", default="faster-whisper", choices=ASR_ENGINES,
+                       help="转写引擎（默认 faster-whisper；Apple Silicon 用 mlx-whisper 快 5-8 倍）")
+        p.add_argument("--asr-model", default=None,
+                       help="引擎对应的模型：faster/mlx 用 base/small/large-v3-turbo，qwen3 用 0.6b/1.7b/flash")
         p.add_argument("--category", default="未分类", help="资产分类目录")
         p.add_argument("--max-frames", type=int, default=24, help="故事板最大帧数")
         p.add_argument("--json", action="store_true", help="JSON 输出到 stdout")
@@ -278,13 +299,11 @@ def main():
         help="第三模式：蒸馏整个文件夹（去重 + 合并 + 方法论 + 产品逆向）",
     )
     p_distill.add_argument("input", help="文件夹路径（可含子目录）")
-    p_distill.add_argument("--asr", default="faster-whisper",
-                           choices=["faster-whisper", "whisper", "sensevoice", "minutes"],
+    p_distill.add_argument("--asr", default="faster-whisper", choices=ASR_ENGINES,
                            help="转写引擎")
-    p_distill.add_argument("--whisper-model", default=None,
-                           choices=["tiny", "base", "small", "medium",
-                                    "large-v3", "large-v3-turbo"],
-                           help="faster-whisper 模型大小（默认取 WHISPER_MODEL，base 最快）")
+    p_distill.add_argument("--asr-model", "--whisper-model", dest="asr_model", default=None,
+                           help="模型：faster/mlx 用 tiny/base/small/medium/large-v3/large-v3-turbo；"
+                                "qwen3-asr 用 0.6b/1.7b/flash（默认取各引擎的 config 默认值）")
     p_distill.add_argument("--category", default="未分类", help="资产分类目录")
     p_distill.add_argument("--name", default=None, help="批次名（默认用文件夹名）")
     p_distill.add_argument("--max-videos", type=int, default=None, help="只跑前 N 个视频（试跑用）")
@@ -301,6 +320,10 @@ def main():
     p_list.add_argument("--category", default=None, help="按分类筛选")
     p_list.add_argument("--json", action="store_true")
     p_list.set_defaults(func=cmd_list)
+
+    p_engines = sub.add_parser("engines", help="列出转写引擎及可用性")
+    p_engines.add_argument("--json", action="store_true")
+    p_engines.set_defaults(func=cmd_engines)
 
     p_info = sub.add_parser("info", help="读取资产摘要")
     p_info.add_argument("input", help="资产目录路径")

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  自动同步：每 30 分钟把远端更新拉到本地（只拉不推，最安全的模式）
+
+  安装：
+    sed -e "s|__ROOT__|$PWD|g" -e "s|__HOME__|$HOME|g" \
+        scripts/com.video2text.sync.plist > ~/Library/LaunchAgents/com.video2text.sync.plist
+    launchctl load ~/Library/LaunchAgents/com.video2text.sync.plist
+
+  查看：
+    launchctl list | grep video2text
+    tail -f ~/Library/Logs/video2text-sync.log
+
+  卸载：
+    launchctl unload ~/Library/LaunchAgents/com.video2text.sync.plist
+    rm ~/Library/LaunchAgents/com.video2text.sync.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.video2text.sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__ROOT__/scripts/git-sync.sh</string>
+        <string>--pull-only</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__ROOT__</string>
+
+    <!-- 每 30 分钟一次 -->
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/video2text-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/video2text-sync.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

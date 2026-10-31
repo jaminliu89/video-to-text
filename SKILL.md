@@ -72,11 +72,21 @@ output/<分类>/<批次>/
 
 ## 转写引擎选择
 
-| 引擎 | 命令参数 | 大小 | 成本 | 质量 | 说明 |
-|------|---------|------|------|------|------|
-| whisper base（默认） | `--asr whisper` | 141MB | 免费 | ⭐⭐⭐ | 简体、错字少、时间戳细 |
-| sensevoice（增强） | `--asr sensevoice` | 893MB | 免费 | ⭐⭐⭐⭐ | 标点好、流畅度高，需本地 funasr |
-| minutes | `--asr minutes` | 云端 | 免费额度 | ⭐⭐⭐⭐ | 飞书妙记，需 lark-cli |
+先跑 `python3 cli.py engines --json` 查这台机器上哪些引擎真能用（返回 `available` 与 `reason`）。
+
+| 引擎 | 命令参数 | 稳态速度（122s 音频） | 质量 | 说明 |
+|------|---------|------|------|------|
+| **mlx-whisper**（Apple Silicon 推荐） | `--asr mlx-whisper --asr-model large-v3-turbo` | **5.3s（23x）** | ⭐⭐⭐⭐ | Metal GPU；`base` 更快，1.7s（72x） |
+| faster-whisper（默认） | `--asr faster-whisper --asr-model base` | 14.3s（8.6x） | ⭐⭐⭐ | 跨平台，稳 |
+| qwen3-asr | `--asr qwen3-asr --asr-model 0.6b` | 11.5s（10.6x） | ⭐⭐⭐⭐ | 断句标点最好；`flash` 走云端，零下载 |
+| sensevoice | `--asr sensevoice` | — | ⭐⭐⭐⭐ | 标点好，需本地 funasr |
+| minutes | `--asr minutes` | 云端 | ⭐⭐⭐⭐ | 飞书妙记，需 lark-cli |
+
+**选型规则**：Apple Silicon → `mlx-whisper`；其他平台 → `faster-whisper`；
+要断句标点好 → `qwen3-asr`。详细对比与复现方式见 `docs/asr-engines.md`。
+
+> 引擎不是第一手段。专有名词被系统性听错时，先用 `--hotwords "错词=正词"`（零成本），
+> 换模型是最后一步。
 
 ## 输出资产结构
 

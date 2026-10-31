@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# .githooks/post-commit — 提交后自动推送（默认关闭，避免误推）
+#
+# 打开方式（二选一）：
+#   git config --local sync.autopush true     # 本仓库永久打开
+#   AUTO_PUSH=1 git commit -m "xxx"           # 只对这一次提交生效
+#
+# 启用前先跑一次：scripts/git-sync.sh --install-hooks
+set -euo pipefail
+
+want="$(git config --bool sync.autopush 2>/dev/null || echo false)"
+if [[ "${AUTO_PUSH:-0}" != "1" && "$want" != "true" ]]; then
+  exit 0
+fi
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if ! git remote get-url origin >/dev/null 2>&1; then
+  exit 0
+fi
+
+echo "→ post-commit: 自动推送 origin/$branch"
+git push -q origin "$branch" || echo "✗ 自动推送失败（稍后可用 scripts/git-sync.sh 重试）"
