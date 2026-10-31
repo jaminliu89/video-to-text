@@ -1,7 +1,11 @@
 name: Release
 
-# 打 tag（v0.5.0）就自动出可分发的包并建 Release；
+# 打 tag（v0.5.2）就自动出可分发的包并建 Release；
 # 也可以手动跑：Actions → Release → Run workflow
+#
+# 产物：
+#   - 源码包（tar.gz / zip / SHA256SUMS）        ← ubuntu 上构建，秒出
+#   - macOS 安装包 VideoToText-<ver>-<arch>.dmg  ← macos-14 上 PyInstaller + hdiutil
 on:
   push:
     tags: ["v*"]
@@ -15,8 +19,11 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # ---------- 1. 源码包 + 建 Release ----------
+  source:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,14 +55,14 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "版本：$V"
 
-      - name: Build distribution
+      - name: Build source distribution
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           chmod +x scripts/build_release.sh
           bash scripts/build_release.sh
 
-      - name: Upload to Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
@@ -63,7 +70,18 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            ## 安装
+            ## 安装（macOS 桌面版）
+
+            下载 `VideoToText-${{ steps.ver.outputs.version }}-arm64.dmg`，双击挂载，
+            把 App 拖进 Applications。**首次打开请右键 → 打开**（ad-hoc 签名，未走苹果公证）。
+
+            ```bash
+            xattr -dr com.apple.quarantine /Applications/VideoToText.app   # 提示"已损坏"时执行
+            ```
+
+            已内置 ffmpeg / ffprobe，转写默认 faster-whisper（首次使用自动下载模型）。
+
+            ## 安装（源码 / 命令行）
 
             ```bash
             tar -xzf video2text-${{ steps.ver.outputs.version }}.tar.gz
@@ -85,9 +103,54 @@ jobs:
             dist/*.zip
             dist/SHA256SUMS.txt
 
-      - name: Keep artifact as backup
+      - name: Keep source artifact
         uses: actions/upload-artifact@v4
         with:
-          name: video2text-v${{ steps.ver.outputs.version }}
+          name: video2text-src-v${{ steps.ver.outputs.version }}
           path: dist/
+          retention-days: 90
+
+  # ---------- 2. macOS DMG ----------
+  dmg:
+    runs-on: macos-14   # arm64
+    needs: source
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          # App 只用 faster-whisper，不装 torch/transformers/mlx（spec 里也排除了）
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build .app + DMG
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          chmod +x scripts/build_dmg.sh
+          bash scripts/build_dmg.sh
+
+      - name: 校验 DMG（挂载 + 静态链接 + 真的启动一次）
+        run: |
+          chmod +x scripts/verify_dmg.sh
+          bash scripts/verify_dmg.sh
+
+      - name: Upload DMG to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DMG="$(ls dist/*.dmg | head -1)"
+          shasum -a 256 "$DMG" | awk -v n="$(basename "$DMG")" '{print $1"  "n}' > dist/DMG-SHA256.txt
+          gh release upload "v${{ needs.source.outputs.version }}" "$DMG" dist/DMG-SHA256.txt --clobber
+
+      - name: Keep DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video2text-dmg-v${{ needs.source.outputs.version }}
+          path: dist/*.dmg
           retention-days: 90

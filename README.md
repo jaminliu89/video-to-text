@@ -264,17 +264,40 @@ launchctl load ~/Library/LaunchAgents/com.video2text.sync.plist
 ### 构建与分发
 
 ```bash
-scripts/build_release.sh     # 产出 dist/*.tar.gz / *.zip / SHA256SUMS.txt
+scripts/build_release.sh     # 源码包：dist/*.tar.gz / *.zip / SHA256SUMS.txt
+scripts/build_dmg.sh         # macOS 安装包：dist/VideoToText-<版本>-<arch>.dmg
+scripts/verify_dmg.sh        # 验收 DMG：挂载 → 查结构/静态 ffmpeg → 真的启动一次
 ```
 
-CI 会自动做两件事：
+`build_dmg.sh` 会做四件事：PyInstaller 打成 `VideoToText.app`（one-dir，冷启动 ~2s）→
+把静态 ffmpeg/ffprobe 塞进 `Contents/Frameworks/bin/` → ad-hoc 签名 → `hdiutil` 封 DMG
+（带 `/Applications` 软链，拖进去就是安装）。没有苹果开发者证书，所以用户首次打开要
+**右键 → 打开**；提示"已损坏"时执行 `xattr -dr com.apple.quarantine /Applications/VideoToText.app`。
+
+装好之后：
+
+| 路径 | 内容 |
+|---|---|
+| `~/Library/Application Support/VideoToText/.env` | 配置（也可用 `VIDEOTOTEXT_HOME` 改目录） |
+| `.../VideoToText/cache`、`output` | 转写缓存与产出 |
+| `.../VideoToText/app.log` | **启动日志**——窗口模式没有终端，App 打不开就看这个 |
+
+CI 会自动做三件事：
 
 | 触发 | 动作 |
 |---|---|
 | PR / push main | Linux + macOS(arm64) 双平台检查 → 通过后构建源码包并上传 artifact |
-| push tag `v*` | 冒烟测试 → 构建 → 创建 GitHub Release 并附上包与校验和 |
+| PR / push main | macOS 上打 DMG → `verify_dmg.sh`（挂载 / 静态链接 / **真的启动一次**）→ 上传 artifact |
+| push tag `v*` | 冒烟测试 → 构建源码包 → 创建 GitHub Release |
+| push tag `v*` | 打 DMG → 同一套验收 → 附到 Release |
 
-发版：`git tag v0.5.0 && git push origin v0.5.0`
+发版：`git tag v0.5.2 && git push origin v0.5.2`
+
+> 打包踩过的坑都写在 `packaging/` 的注释里，最容易复发的是两个：
+> ① 入口必须 `import gui; gui.run_app()`（静态 import），用 `runpy` 按路径执行会让
+> PyInstaller 的依赖图变成空的，运行时报 `ModuleNotFoundError: nicegui`；
+> ② 入口第一条语句必须是 `multiprocessing.freeze_support()`，否则 multiprocessing 的
+> 辅助进程会把整个 App 再启动一遍，形成无限自我复制的进程链（详见 `packaging/launcher.py`）。
 
 ---
 
@@ -309,9 +332,9 @@ video-to-text/
 - [x] v0.2 — 三种引擎 + 深度拆解
 - [x] v0.3 — NiceGUI 界面 + 批量队列
 - [x] v0.4 — 历史记录 + Obsidian 导出 + 缓存
-- [x] v0.5 — 蒸馏模式（去重 / 合并 / 方法论 / 产品逆向）
+- [x] v0.5 — 蒸馏模式（去重 / 合并 / 方法论 / 产品逆向）+ 多引擎实测 + DMG 分发
 - [ ] v0.6 — 说话人分离（diarization）
-- [ ] v0.7 — 打包发布（macOS .app / Windows .exe）
+- [ ] v0.7 — Windows .exe / Linux AppImage
 - [ ] v0.8 — 插件系统（自定义输出模板）
 - [ ] v1.0 — 稳定版 + 文档站
 

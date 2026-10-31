@@ -1050,14 +1050,31 @@ def process_single_video(video_path: Path, mode: str, engine: str = None, deep: 
         "output_path": str(output_md),
     }
 
-if __name__ in {"__main__", "__mp_main__"}:
+_RUN_CALLS = 0
+
+
+def run_app():
+    """启动界面（打包成 .app 时由 packaging/launcher.py 调用）"""
+    global _RUN_CALLS
+    _RUN_CALLS += 1
+    print(f"[gui] run_app 第 {_RUN_CALLS} 次调用", flush=True)
     ui.run(
         title="VideoToText",
-        port=8766,
-        show=False,
+        # 只监听回环地址：这是个本地工具，没有理由把 8766 端口暴露到局域网
+        host="127.0.0.1",
+        # 端口冲突时可以用 V2T_PORT 换一个（冒烟测试也靠它避开已有实例）
+        port=int(os.environ.get("V2T_PORT", "8766")),
+        show=os.environ.get("V2T_SHOW") == "1",  # .app 里自动打开浏览器
         dark=False,
+        # 千万别传 window_size / fullscreen / frameless：
+        # nicegui 看到它们会把 native 强制改成 True（ui_run.py: "if window_size: native = True"），
+        # 然后走进 pywebview 分支。我们没打包 pywebview，结果就是启动即 exit(1)，
+        # 端口上什么都不监听 —— 浏览器报 502。
         native=False,
-        window_size=(900, 750),
         reload=False,
         storage_secret="videotext-gui-secret",
     )
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    run_app()
