@@ -121,7 +121,15 @@ def test_segments_from_text():
     check("纯标点返回空", asr._segments_from_text("。。。", 0, 10) == [])
 
 
+def _has_ffmpeg() -> bool:
+    from v2t import ffmpeg as ff
+    return Path(ff.ffmpeg()).exists() or bool(__import__("shutil").which("ffmpeg"))
+
+
 def test_split_wav():
+    if not _has_ffmpeg():
+        print("  · 跳过（这台机器没装 ffmpeg，CI 上会装）")
+        return
     with tempfile.TemporaryDirectory() as d:
         short = make_wav(Path(d) / "short.wav", 1.0)
         parts = asr._split_wav(short, chunk_sec=240)
