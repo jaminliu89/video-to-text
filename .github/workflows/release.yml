@@ -1,0 +1,93 @@
+name: Release
+
+# 打 tag（v0.5.0）就自动出可分发的包并建 Release；
+# 也可以手动跑：Actions → Release → Run workflow
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v），留空则用 VERSION 文件"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Smoke test before shipping
+        run: |
+          pip install -r requirements.txt
+          python -m py_compile cli.py v2t/asr.py v2t/distill.py
+          python tests/test_distill_units.py
+          python tests/test_asr_units.py
+          python cli.py engines
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="$(cat VERSION)"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "版本：$V"
+
+      - name: Build distribution
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          chmod +x scripts/build_release.sh
+          bash scripts/build_release.sh
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: v${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## 安装
+
+            ```bash
+            tar -xzf video2text-${{ steps.ver.outputs.version }}.tar.gz
+            cd video2text-${{ steps.ver.outputs.version }}
+            pip install -r requirements.txt
+            brew install ffmpeg            # macOS；Linux 用 apt install ffmpeg
+            python cli.py engines          # 看哪些转写引擎可用
+            ```
+
+            ## 校验
+
+            ```bash
+            shasum -a 256 -c SHA256SUMS.txt
+            ```
+
+            转写引擎对比见 `docs/asr-engines.md`，蒸馏方法见 `docs/distill-method.md`。
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS.txt
+
+      - name: Keep artifact as backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: video2text-v${{ steps.ver.outputs.version }}
+          path: dist/
+          retention-days: 90

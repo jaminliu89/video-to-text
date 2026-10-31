@@ -51,6 +51,16 @@ WHISPER_MODEL = _get("WHISPER_MODEL", "base")
 WHISPER_CLI = _get("WHISPER_CLI", "whisper-cli")
 WHISPER_MODEL_DIR = Path(_get("WHISPER_MODEL_DIR", str(Path.home() / ".cache" / "whisper"))).expanduser()
 
+# mlx-whisper（Apple Silicon Metal 后端，同一份 Whisper 权重）
+MLX_WHISPER_MODEL = _get("MLX_WHISPER_MODEL", "large-v3-turbo")
+
+# Qwen3-ASR：0.6b / 1.7b 走本地 qwen-asr 包；flash 走 DashScope 云端
+QWEN3_ASR_MODEL = _get("QWEN3_ASR_MODEL", "0.6b")
+# 是否加载强制对齐模型拿字级时间戳（多下载 ~1.2G，长音频更慢）
+QWEN3_ASR_ALIGN = _get("QWEN3_ASR_ALIGN", "0") in ("1", "true", "True", "on", "yes")
+DASHSCOPE_API_KEY = _get("DASHSCOPE_API_KEY", "")
+DASHSCOPE_BASE = _get("DASHSCOPE_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
 # 硅基流动
 SILICONFLOW_API_KEY = _get("SILICONFLOW_API_KEY", "")
 SILICONFLOW_BASE = _get("SILICONFLOW_BASE", "https://api.siliconflow.cn/v1")
@@ -91,6 +101,9 @@ def all_config_dict() -> dict:
     """返回所有配置（用于设置页显示）"""
     return {
         "WHISPER_MODEL": WHISPER_MODEL,
+        "MLX_WHISPER_MODEL": MLX_WHISPER_MODEL,
+        "QWEN3_ASR_MODEL": QWEN3_ASR_MODEL,
+        "DASHSCOPE_API_KEY": mask_key(DASHSCOPE_API_KEY),
         "SILICONFLOW_API_KEY": mask_key(SILICONFLOW_API_KEY),
         "SILICONFLOW_BASE": SILICONFLOW_BASE,
         "LLM_MODEL": LLM_MODEL,
@@ -120,9 +133,18 @@ def mask_key(key: str) -> str:
 # 配置项元数据（设置页用）
 CONFIG_FIELDS = [
     {
+        "section": "转写引擎",
+        "items": [
+            {"key": "WHISPER_MODEL", "label": "faster-whisper 模型", "type": "text", "default": "base"},
+            {"key": "MLX_WHISPER_MODEL", "label": "mlx-whisper 模型（Apple Silicon）", "type": "text", "default": "large-v3-turbo"},
+            {"key": "QWEN3_ASR_MODEL", "label": "Qwen3-ASR 模型（0.6b/1.7b/flash）", "type": "text", "default": "0.6b"},
+            {"key": "QWEN3_ASR_ALIGN", "label": "Qwen3 字级时间戳（1/0，需对齐模型）", "type": "text", "default": "0"},
+            {"key": "DASHSCOPE_API_KEY", "label": "阿里云百炼 API Key（qwen3-asr-flash 云端）", "type": "password", "default": ""},
+        ],
+    },
+    {
         "section": "本地 Whisper",
         "items": [
-            {"key": "WHISPER_MODEL", "label": "Whisper 模型", "type": "text", "default": "small"},
             {"key": "WHISPER_MODEL_DIR", "label": "模型目录", "type": "text", "default": "~/.cache/whisper"},
         ],
     },

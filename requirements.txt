@@ -11,4 +11,12 @@ Pillow>=10.0.0
 numpy>=1.24.0
 faster-whisper>=1.0.0
 
+# Apple Silicon 的 Metal 后端（v2t/asr.py 的 mlx-whisper 分支）
+# 只在 macOS arm64 上装得上；其他平台 pip 会直接跳过这一行
+mlx-whisper>=0.4.0; sys_platform == "darwin" and platform_machine == "arm64"
+
+# 可选：Qwen3-ASR 本地引擎（1.2G 权重 + transformers 全家桶，体积大，默认不装）
+# 需要时手动装：pip install qwen-asr
+# 或走云端：配 DASHSCOPE_API_KEY，用 --asr qwen3-asr --asr-model flash
+
 # 注意：ffmpeg / ffprobe 需要系统安装（brew install ffmpeg），不是 pip 包

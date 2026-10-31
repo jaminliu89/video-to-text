@@ -70,7 +70,9 @@ S0 采集 → S1 去重 → S2 转写 → S3 合并 → S4 深读 → S5 综合 
 
 - Python 3.10+
 - ffmpeg（系统安装：`brew install ffmpeg` 或官网下载）
-- （可选）whisper.cpp — 本地模式需要
+- （可选）mlx-whisper — Apple Silicon 上快 7 倍，`pip install mlx-whisper`
+- （可选）qwen-asr — 中文最强，`pip install qwen-asr`；或配 `DASHSCOPE_API_KEY` 走云端
+- （可选）whisper.cpp — 旧本地模式需要
 
 ### 安装
 
@@ -149,14 +151,28 @@ output/课程/某门课/
 
 ## 转写引擎对比
 
-| 引擎 | 命令参数 | 大小 | 成本 | 中文质量 | 长音频重复字 |
-|------|---------|------|------|---------|-------------|
-| **whisper base（默认）** | `--asr whisper` | 141MB | 免费 | ⭐⭐⭐ | 无 |
-| sensevoice（增强） | `--asr sensevoice` | 893MB | 免费 | ⭐⭐⭐⭐ | 无 |
-| 飞书妙记 | `--asr minutes` | 云端 | 免费额度 | ⭐⭐⭐⭐ | 无 |
+同一段 122 秒中文课程音频实测（Apple Silicon，详见 [docs/asr-engines.md](docs/asr-engines.md)）：
 
-**默认模式**：whisper base（141MB），下得快、简体、错字少、时间戳细
-**增强模式**：sensevoice（用户手动开启），标点好、流畅度高，但模型大
+| 引擎 | 参数 | 稳态耗时 | 倍速 | 内存 | 说明 |
+|------|------|-----:|-----:|-----:|------|
+| **mlx-whisper** | `--asr mlx-whisper --asr-model base` | **1.7s** | **72.6x** | 489MB | 最快，适合粗跑 |
+| **mlx-whisper** | `--asr mlx-whisper --asr-model large-v3-turbo` | **5.3s** | **23.1x** | 1144MB | **Apple Silicon 最优解** |
+| qwen3-asr | `--asr qwen3-asr --asr-model 0.6b` | 11.5s | 10.6x | 1352MB | 断句标点最好，需 1.2G 权重 |
+| faster-whisper | `--asr faster-whisper --asr-model base` | 14.3s | 8.6x | 816MB | 跨平台默认，稳 |
+| faster-whisper | `--asr faster-whisper --asr-model small` | 29.5s | 4.2x | 1326MB | CPU 上更准一档 |
+| faster-whisper | `--asr faster-whisper --asr-model large-v3-turbo` | 47.7s | 2.6x | 2077MB | CPU 跑大模型太慢 |
+| sensevoice | `--asr sensevoice` | — | — | 893MB | 标点好，需 funasr |
+| 飞书妙记 | `--asr minutes` | 云端 | — | — | 免费额度，需 lark-cli |
+
+```bash
+python3 cli.py engines     # 看这台机器上哪些引擎真能用（缺什么会告诉你）
+```
+
+**选型建议**：Apple Silicon 直接用 `mlx-whisper`（turbo 求准、base 求快）；
+其他平台用 `faster-whisper`；要断句标点好就用 `qwen3-asr`。
+
+> 换引擎是最后一步。专有名词被系统性听错时，先用 `--hotwords "错词=正词"` 纠正，
+> 成本为零、立刻见效。
 
 ## Agent CLI 接口（给别的 Agent 调用）
 
@@ -178,6 +194,12 @@ python3 cli.py distill ./某门课/ --category 课程 --json
 
 # 列出资产
 python3 cli.py list --json
+
+# 看这台机器上有哪些转写引擎可用
+python3 cli.py engines --json
+
+# 引擎横向基准（速度 / 内存 / CER / 术语命中）
+python3 benchmarks/asr_bench.py --audio clip.wav --engines mlx-whisper:large-v3-turbo,faster-whisper:base
 ```
 
 所有命令加 `--json`，结果输出到 stdout，日志走 stderr，可直接被 Agent 解析。
@@ -207,10 +229,52 @@ output/
 | `ARK_VIDEO_ENDPOINT` | 豆包视频模型 Endpoint ID | 豆包模式需要 |
 | `SILICONFLOW_API_KEY` | 硅基流动 API Key | 关键帧模式需要 |
 | `DISTILL_LLM_BASE` / `_KEY` / `_MODEL` | 蒸馏模式用的 LLM（任意 OpenAI 兼容端点，留空自动回落硅基流动/火山方舟） | 蒸馏模式可选 |
-| `WHISPER_CLI` | whisper.cpp 可执行文件路径 | 本地模式需要 |
+| `MLX_WHISPER_MODEL` | mlx-whisper 模型（默认 large-v3-turbo） | Apple Silicon 推荐 |
+| `QWEN3_ASR_MODEL` | Qwen3-ASR 模型（0.6b / 1.7b / flash） | 用 qwen3 时需要 |
+| `DASHSCOPE_API_KEY` | 阿里云百炼 Key（qwen3-asr-flash 云端） | 云端 qwen3 需要 |
+| `WHISPER_CLI` | whisper.cpp 可执行文件路径 | 旧本地模式需要 |
 | `OBSIDIAN_VAULT` | Obsidian Vault 路径 | Obsidian 导出需要 |
 
 所有配置也可以在 GUI「设置」页面修改，优先级更高。
+
+---
+
+## 自动同步与分发
+
+### 本地仓库自动同步
+
+```bash
+scripts/git-sync.sh                  # pull --rebase → 有改动就 commit → push
+scripts/git-sync.sh --pull-only      # 只拉远端（定时更新代码用）
+scripts/git-sync.sh --install-hooks  # 装 post-commit 钩子，提交后自动 push
+```
+
+想让它定时自动拉：
+
+```bash
+# macOS（launchd，每 30 分钟）
+sed -e "s|__ROOT__|$PWD|g" -e "s|__HOME__|$HOME|g" \
+    scripts/com.video2text.sync.plist > ~/Library/LaunchAgents/com.video2text.sync.plist
+launchctl load ~/Library/LaunchAgents/com.video2text.sync.plist
+
+# Linux / 任意系统（cron）
+*/30 * * * * /绝对路径/scripts/git-sync.sh --pull-only >> ~/.video2text-sync.log 2>&1
+```
+
+### 构建与分发
+
+```bash
+scripts/build_release.sh     # 产出 dist/*.tar.gz / *.zip / SHA256SUMS.txt
+```
+
+CI 会自动做两件事：
+
+| 触发 | 动作 |
+|---|---|
+| PR / push main | Linux + macOS(arm64) 双平台检查 → 通过后构建源码包并上传 artifact |
+| push tag `v*` | 冒烟测试 → 构建 → 创建 GitHub Release 并附上包与校验和 |
+
+发版：`git tag v0.5.0 && git push origin v0.5.0`
 
 ---
 

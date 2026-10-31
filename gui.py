@@ -17,6 +17,7 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import video2text as v2t
 import config as cfg
+from v2t import asr as asr_engines
 
 # ============ 全局状态 ============
 
@@ -30,7 +31,39 @@ TOTAL_PROGRESS = 0
 
 # 引擎和深度
 ENGINE = "doubao"
-ASR_ENGINE = "faster-whisper"  # 转写引擎：faster-whisper/whisper/sensevoice
+
+
+def _asr_choices() -> dict:
+    """只列出这台机器上真能用的引擎（按推荐顺序）"""
+    avail = {r["engine"]: r for r in asr_engines.list_engines()}
+    labels = {
+        "mlx-whisper": "mlx-whisper — Apple Metal，同质量快 7 倍（推荐）",
+        "faster-whisper": "faster-whisper — CPU 通用，最稳",
+        "qwen3-asr": "Qwen3-ASR — 中文最准（本地 0.6b 或云端 flash）",
+        "sensevoice": "sensevoice — 标点好（需 funasr）",
+        "whisper": "whisper.cpp — 旧引擎，不建议",
+    }
+    out = {k: v for k, v in labels.items() if avail.get(k, {}).get("available")}
+    return out or {"faster-whisper": labels["faster-whisper"]}
+
+
+def _asr_models(engine: str) -> list:
+    return {
+        "mlx-whisper": ["base", "small", "medium", "large-v3", "large-v3-turbo"],
+        "faster-whisper": ["base", "small", "medium", "large-v3", "large-v3-turbo"],
+        "qwen3-asr": ["0.6b", "1.7b", "flash"],
+    }.get(engine, ["base"])
+
+
+def _default_model(engine: str) -> str:
+    return {
+        "mlx-whisper": cfg.MLX_WHISPER_MODEL,
+        "faster-whisper": cfg.WHISPER_MODEL,
+        "qwen3-asr": cfg.QWEN3_ASR_MODEL,
+    }.get(engine, "base")
+
+
+ASR_ENGINE = next(iter(_asr_choices()))  # 有 MLX 就用 MLX
 WITH_STORYBOARD = True  # 是否生成九宫格故事板
 CATEGORY = "未分类"    # 资产分类
 DEPTH = "standard"
@@ -42,8 +75,8 @@ DISTILL = {
     "result": None,
     "folder": "",
     "category": "未分类",
-    "asr": "faster-whisper",
-    "whisper_model": "base",
+    "asr": ASR_ENGINE,
+    "whisper_model": _default_model(ASR_ENGINE),
     "use_llm": True,
     "concurrency": 3,
 }
@@ -702,11 +735,8 @@ def page_content():
                 def set_asr(e):
                     global ASR_ENGINE
                     ASR_ENGINE = e.value
-                ui.radio({
-                    "faster-whisper": "faster-whisper — 本地免费，快，不重复",
-                    "whisper": "whisper.cpp — 本地免费，Metal 加速",
-                    "sensevoice": "sensevoice — 本地免费，标点好（需 funasr）",
-                }, value=ASR_ENGINE, on_change=set_asr).props("inline label-color").classes("w-full")
+                ui.radio(_asr_choices(), value=ASR_ENGINE,
+                         on_change=set_asr).props("inline label-color").classes("w-full")
 
                 ui.separator().classes("my-4")
                 ui.label("拆解深度").classes("text-sm font-medium mb-3")
@@ -753,22 +783,30 @@ def page_content():
 
             ui.separator().classes("my-4")
             ui.label("转写引擎").classes("text-sm font-medium mb-2")
-            ui.radio({
-                "faster-whisper": "faster-whisper — 本地免费，最快（推荐）",
-                "sensevoice": "sensevoice — 标点好（需 funasr）",
-                "whisper": "whisper.cpp — 本地免费，Metal 加速",
-            }, value=DISTILL["asr"],
-                on_change=lambda e: DISTILL.update(asr=e.value)
-            ).props("inline label-color").classes("w-full")
+            model_select = None
+
+            def set_distill_asr(e):
+                """换引擎时模型选项和默认值一起换，避免 base 传给 qwen3"""
+                DISTILL["asr"] = e.value
+                models = _asr_models(e.value)
+                model_select.options = models
+                model_select.value = _default_model(e.value)
+                DISTILL["whisper_model"] = model_select.value
+                model_select.update()
+
+            ui.radio(_asr_choices(), value=DISTILL["asr"],
+                     on_change=set_distill_asr
+                     ).props("inline label-color").classes("w-full")
 
             with ui.row().classes("gap-6 items-center mt-4 flex-wrap"):
-                ui.select(["base", "small", "medium", "large-v3-turbo"],
-                          value=DISTILL["whisper_model"], label="转写模型",
-                          on_change=lambda e: DISTILL.update(whisper_model=e.value)
-                          ).props("outlined dense").classes("w-44")
+                model_select = ui.select(_asr_models(DISTILL["asr"]),
+                                         value=DISTILL["whisper_model"], label="转写模型",
+                                         on_change=lambda e: DISTILL.update(whisper_model=e.value)
+                                         ).props("outlined dense").classes("w-44")
                 ui.switch("用 LLM 抽象方法论 / 逆向产品", value=DISTILL["use_llm"],
                           on_change=lambda e: DISTILL.update(use_llm=e.value))
-            ui.label("base 最快：1.6 小时视频约 15 分钟；small 更准但慢 3-5 倍").classes("text-xs opacity-40 mt-1")
+            ui.label("Apple Silicon 上 mlx-whisper + large-v3-turbo 最快（1.6 小时视频约 8 分钟）"
+                     "；faster-whisper base 约 15 分钟").classes("text-xs opacity-40 mt-1")
 
         ui.button("蒸馏中…" if DISTILL["running"] else "开始蒸馏",
                   icon="play_arrow", on_click=start_distill

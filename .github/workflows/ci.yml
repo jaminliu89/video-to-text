@@ -5,8 +5,14 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # 1) 通用检查：Linux，纯 CPU，验证代码能跑、引擎注册表正确
   check:
     runs-on: ubuntu-latest
     steps:
@@ -17,6 +23,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -24,15 +33,10 @@ jobs:
 
       - name: Syntax check
         run: |
-          python -m py_compile video2text.py
-          python -m py_compile config.py
-          python -m py_compile cli.py
-          python -m py_compile v2t/asr.py
-          python -m py_compile v2t/storyboard.py
-          python -m py_compile v2t/assets.py
-          python -m py_compile v2t/ffmpeg.py
-          python -m py_compile v2t/distill.py
-          python -m py_compile v2t/distill_prompts.py
+          python -m py_compile video2text.py config.py cli.py gui.py
+          python -m py_compile v2t/asr.py v2t/storyboard.py v2t/assets.py
+          python -m py_compile v2t/ffmpeg.py v2t/distill.py v2t/distill_prompts.py
+          python -m py_compile benchmarks/asr_bench.py
 
       - name: Import check
         run: |
@@ -43,10 +47,107 @@ jobs:
           python -c "import v2t.ffmpeg; print('ffmpeg OK')"
           python -c "import v2t.distill; print('distill OK')"
 
-      - name: Unit tests (distill)
-        run: python tests/test_distill_units.py
+      - name: Unit tests
+        run: |
+          python tests/test_distill_units.py
+          python tests/test_asr_units.py
+
+      - name: Engine registry (Linux must not claim mlx)
+        run: |
+          python cli.py engines
+          python - <<'PY'
+          import json, subprocess, sys
+          rows = json.loads(subprocess.check_output(
+              [sys.executable, "cli.py", "engines", "--json"], text=True))["engines"]
+          by = {r["engine"]: r for r in rows}
+          assert by["faster-whisper"]["available"], "faster-whisper 装了却不可用"
+          assert not by["mlx-whisper"]["available"], "Linux 上不该报告 mlx-whisper 可用"
+          assert "Apple Silicon" in by["mlx-whisper"]["reason"], by["mlx-whisper"]["reason"]
+          assert by["qwen3-asr"]["available"] is False
+          print("✓ 引擎可用性判定正确")
+          PY
 
       - name: CLI help
         run: |
           python cli.py --help
           python cli.py distill --help
+          python cli.py engines --json > /dev/null
+
+  # 2) Apple Silicon：验证 MLX 后端真能加载（Linux 上没法测）
+  macos-mlx:
+    runs-on: macos-14   # arm64 (M1)，MLX 需要 Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ffmpeg
+        run: |
+          command -v ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # requirements.txt 里的 mlx-whisper 带平台标记，arm64 上会自动装上
+
+      - name: Verify MLX backend
+        run: |
+          python - <<'PY'
+          import platform, sys
+          assert sys.platform == "darwin" and platform.machine() == "arm64", \
+              f"runner 不是 arm64: {sys.platform}/{platform.machine()}"
+          import mlx.core as mx
+          print("mlx device:", mx.default_device())
+          import mlx_whisper
+          print("mlx_whisper OK")
+          PY
+
+      - name: Engine registry (macOS should expose mlx-whisper)
+        run: |
+          python cli.py engines
+          python - <<'PY'
+          import json, subprocess, sys
+          rows = json.loads(subprocess.check_output(
+              [sys.executable, "cli.py", "engines", "--json"], text=True))["engines"]
+          by = {r["engine"]: r for r in rows}
+          assert by["mlx-whisper"]["available"], by["mlx-whisper"]["reason"]
+          assert by["mlx-whisper"]["gpu"] is True
+          print("✓ mlx-whisper 在 Apple Silicon 上可用")
+          PY
+
+      - name: Unit tests
+        run: |
+          python tests/test_distill_units.py
+          python tests/test_asr_units.py
+
+  # 3) 打包分发：CI 通过后产出可分发的源码包，任何人可直接下载
+  dist:
+    needs: [check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build distribution
+        run: |
+          chmod +x scripts/build_release.sh
+          bash scripts/build_release.sh
+
+      - name: Show artifacts
+        run: cat dist/SHA256SUMS.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: video2text-dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          retention-days: 30
+          if-no-files-found: error
