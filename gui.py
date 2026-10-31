@@ -1052,12 +1052,48 @@ def process_single_video(video_path: Path, mode: str, engine: str = None, deep: 
 
 _RUN_CALLS = 0
 
+# 原生窗口默认尺寸：比浏览器窗口窄一点，看起来像桌面工具而不是网页
+NATIVE_WINDOW_SIZE = (1000, 760)
+
+
+def _native_available() -> bool:
+    """原生窗口依赖 pywebview（macOS 上还要 pyobjc）"""
+    try:
+        import webview  # noqa: F401
+    except Exception:
+        return False
+    return True
+
 
 def run_app():
-    """启动界面（打包成 .app 时由 packaging/launcher.py 调用）"""
+    """启动界面（打包成 .app 时由 packaging/launcher.py 调用）
+
+    两种打开方式，由 V2T_NATIVE 选：
+      0 / 未设 → 起本地服务并打开浏览器（体积小，任何机器都能用，默认）
+      1        → 用 pywebview 开原生窗口（像个真正的桌面 App，需要打包 pywebview）
+    """
     global _RUN_CALLS
     _RUN_CALLS += 1
-    print(f"[gui] run_app 第 {_RUN_CALLS} 次调用", flush=True)
+    want_native = os.environ.get("V2T_NATIVE") == "1"
+    native = want_native and _native_available()
+    if want_native and not native:
+        print("[gui] 要求原生窗口但 pywebview 不可用，回退到浏览器模式", flush=True)
+    print(f"[gui] run_app 第 {_RUN_CALLS} 次调用（native={native}）", flush=True)
+
+    if native:
+        # 原生模式不要传 host/port：nicegui 会自己找一个空闲端口，
+        # 写死端口反而会在第二个实例启动时撞车。
+        # 这里的 window_size 是正当用法——它只在 native 模式下有意义。
+        ui.run(
+            title="VideoToText",
+            dark=False,
+            native=True,
+            window_size=NATIVE_WINDOW_SIZE,
+            reload=False,
+            storage_secret="videotext-gui-secret",
+        )
+        return
+
     ui.run(
         title="VideoToText",
         # 只监听回环地址：这是个本地工具，没有理由把 8766 端口暴露到局域网
@@ -1066,9 +1102,9 @@ def run_app():
         port=int(os.environ.get("V2T_PORT", "8766")),
         show=os.environ.get("V2T_SHOW") == "1",  # .app 里自动打开浏览器
         dark=False,
-        # 千万别传 window_size / fullscreen / frameless：
+        # 浏览器模式下千万别传 window_size / fullscreen / frameless：
         # nicegui 看到它们会把 native 强制改成 True（ui_run.py: "if window_size: native = True"），
-        # 然后走进 pywebview 分支。我们没打包 pywebview，结果就是启动即 exit(1)，
+        # 然后走进 pywebview 分支。标准包里没有 pywebview，结果就是启动即 exit(1)，
         # 端口上什么都不监听 —— 浏览器报 502。
         native=False,
         reload=False,

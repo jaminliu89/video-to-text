@@ -5,7 +5,9 @@ name: Release
 #
 # 产物：
 #   - 源码包（tar.gz / zip / SHA256SUMS）        ← ubuntu 上构建，秒出
-#   - macOS 安装包 VideoToText-<ver>-<arch>.dmg  ← macos-14 上 PyInstaller + hdiutil
+#   - macOS 安装包（两个变体，macos-14 上 PyInstaller + hdiutil）：
+#       VideoToText-<ver>-<arch>.dmg          浏览器版
+#       VideoToText-<ver>-<arch>-native.dmg   原生窗口版
 on:
   push:
     tags: ["v*"]
@@ -72,13 +74,22 @@ jobs:
           body: |
             ## 安装（macOS 桌面版）
 
-            下载 `VideoToText-${{ steps.ver.outputs.version }}-arm64.dmg`，双击挂载，
-            把 App 拖进 Applications。**首次打开请右键 → 打开**（ad-hoc 签名，未走苹果公证）。
+            两个包，界面完全一样，区别只是"界面装在什么窗口里"。按喜好挑一个，也可以都装：
+
+            | 下载 | 界面 | 说明 |
+            | --- | --- | --- |
+            | `VideoToText-${{ steps.ver.outputs.version }}-arm64.dmg` | 浏览器标签页 | 体积小，双击后自动开浏览器（默认推荐） |
+            | `VideoToText-${{ steps.ver.outputs.version }}-arm64-native.dmg` | 原生窗口 | 多带 pywebview，看起来像原生 App |
+
+            双击挂载，把 App 拖进 Applications。**首次打开请右键 → 打开**（ad-hoc 签名，未走苹果公证）。
 
             ```bash
-            xattr -dr com.apple.quarantine /Applications/VideoToText.app   # 提示"已损坏"时执行
+            # 提示"已损坏"时执行（按装的是哪个改路径）
+            xattr -dr com.apple.quarantine /Applications/VideoToText.app
+            xattr -dr com.apple.quarantine /Applications/VideoToTextNative.app
             ```
 
+            两个包共用配置和产出目录（`~/Library/Application Support/VideoToText`）。
             已内置 ffmpeg / ffprobe，转写默认 faster-whisper（首次使用自动下载模型）。
 
             ## 安装（源码 / 命令行）
@@ -128,14 +139,14 @@ jobs:
           # App 只用 faster-whisper，不装 torch/transformers/mlx（spec 里也排除了）
           pip install -r requirements.txt pyinstaller
 
-      - name: Build .app + DMG
+      - name: Build .app + DMG（browser + native 两个变体）
         env:
           VERSION: ${{ needs.source.outputs.version }}
         run: |
           chmod +x scripts/build_dmg.sh
           bash scripts/build_dmg.sh
 
-      - name: 校验 DMG（挂载 + 静态链接 + 真的启动一次）
+      - name: 校验 DMG（挂载 + 静态链接 + 依赖自检 + 真的启动一次）
         run: |
           chmod +x scripts/verify_dmg.sh
           bash scripts/verify_dmg.sh
@@ -144,9 +155,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DMG="$(ls dist/*.dmg | head -1)"
-          shasum -a 256 "$DMG" | awk -v n="$(basename "$DMG")" '{print $1"  "n}' > dist/DMG-SHA256.txt
-          gh release upload "v${{ needs.source.outputs.version }}" "$DMG" dist/DMG-SHA256.txt --clobber
+          # 两个变体都上传，各自一行 sha256（用户只需要核对自己下的那个）
+          for DMG in dist/*.dmg; do
+            shasum -a 256 "$DMG" | awk -v n="$(basename "$DMG")" '{print $1"  "n}'
+          done > dist/DMG-SHA256.txt
+          cat dist/DMG-SHA256.txt
+          gh release upload "v${{ needs.source.outputs.version }}" dist/*.dmg dist/DMG-SHA256.txt --clobber
 
       - name: Keep DMG artifact
         uses: actions/upload-artifact@v4

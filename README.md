@@ -265,14 +265,37 @@ launchctl load ~/Library/LaunchAgents/com.video2text.sync.plist
 
 ```bash
 scripts/build_release.sh     # 源码包：dist/*.tar.gz / *.zip / SHA256SUMS.txt
-scripts/build_dmg.sh         # macOS 安装包：dist/VideoToText-<版本>-<arch>.dmg
-scripts/verify_dmg.sh        # 验收 DMG：挂载 → 查结构/静态 ffmpeg → 真的启动一次
+scripts/build_dmg.sh         # macOS 安装包：两个变体都打（见下）
+scripts/verify_dmg.sh        # 验收 DMG：挂载 → 查结构/静态 ffmpeg/依赖自检 → 真的启动一次
 ```
 
-`build_dmg.sh` 会做四件事：PyInstaller 打成 `VideoToText.app`（one-dir，冷启动 ~2s）→
+#### 两个安装包：浏览器版 / 原生窗口版
+
+界面代码是同一份（NiceGUI），区别只在"界面装在什么窗口里"：
+
+| 下载 | App | 界面 | 体积 |
+|---|---|---|---|
+| `VideoToText-<版本>-arm64.dmg` | `VideoToText.app` | 起本地服务 + 自动开浏览器 | 小（不含 pywebview） |
+| `VideoToText-<版本>-arm64-native.dmg` | `VideoToTextNative.app` | 起本地服务 + 弹原生窗口（pywebview/Cocoa） | 多约 20–30MB |
+
+- 两个包**共用**配置和产出目录（`~/Library/Application Support/VideoToText`），可以同时装。
+- 一个 spec 出两个包：`V2T_VARIANT=browser|native`，差别是"要不要 pywebview + pyobjc"和
+  `Resources/NATIVE_DEFAULT` 这个标记文件（launcher 读它决定默认开哪种窗口）。
+- 浏览器版在 spec 里显式 `EXCLUDES` 掉 pywebview/pyobjc —— nicegui 的 `native_mode.py`
+  顶层有一句 `import webview`（包在 try 里），不排除的话 PyInstaller 会顺着这条边把整个
+  pyobjc 拖进"瘦包"，白涨几十 MB。
+- 只想打一个：`V2T_VARIANTS=browser scripts/build_dmg.sh`（本地迭代时省一半时间）。
+
+`build_dmg.sh` 对每个变体做四件事：PyInstaller 打成 `<exe>.app`（one-dir，冷启动 ~2s）→
 把静态 ffmpeg/ffprobe 塞进 `Contents/Frameworks/bin/` → ad-hoc 签名 → `hdiutil` 封 DMG
 （带 `/Applications` 软链，拖进去就是安装）。没有苹果开发者证书，所以用户首次打开要
-**右键 → 打开**；提示"已损坏"时执行 `xattr -dr com.apple.quarantine /Applications/VideoToText.app`。
+**右键 → 打开**；提示"已损坏"时执行
+`xattr -dr com.apple.quarantine /Applications/<App>.app`。
+
+验收（`verify_dmg.sh`）除了挂载和静态链接，还会跑 `V2T_SELFTEST=1 <exe>` 做依赖图自检：
+原生包必须能 import webview/pyobjc，浏览器包必须**不能**——这条不需要图形界面，
+所以 CI 上也能确定性地抓到"依赖没打进去"这类问题。窗口版的窗口断言需要 Aqua 会话，
+没有就退化成"只验服务端"，并明确打一行 SKIP。
 
 装好之后：
 
@@ -287,17 +310,22 @@ CI 会自动做三件事：
 | 触发 | 动作 |
 |---|---|
 | PR / push main | Linux + macOS(arm64) 双平台检查 → 通过后构建源码包并上传 artifact |
-| PR / push main | macOS 上打 DMG → `verify_dmg.sh`（挂载 / 静态链接 / **真的启动一次**）→ 上传 artifact |
+| PR / push main | macOS 上打**两个** DMG → `verify_dmg.sh`（挂载 / 静态链接 / 依赖自检 / **真的启动一次**）→ 上传 artifact |
 | push tag `v*` | 冒烟测试 → 构建源码包 → 创建 GitHub Release |
-| push tag `v*` | 打 DMG → 同一套验收 → 附到 Release |
+| push tag `v*` | 打两个 DMG → 同一套验收 → 附到 Release（附 `DMG-SHA256.txt`） |
 
-发版：`git tag v0.5.2 && git push origin v0.5.2`
+发版：`git tag v0.6.0 && git push origin v0.6.0`
 
-> 打包踩过的坑都写在 `packaging/` 的注释里，最容易复发的是两个：
+> 打包踩过的坑都写在 `packaging/` 的注释里，最容易复发的是三个：
 > ① 入口必须 `import gui; gui.run_app()`（静态 import），用 `runpy` 按路径执行会让
 > PyInstaller 的依赖图变成空的，运行时报 `ModuleNotFoundError: nicegui`；
 > ② 入口第一条语句必须是 `multiprocessing.freeze_support()`，否则 multiprocessing 的
-> 辅助进程会把整个 App 再启动一遍，形成无限自我复制的进程链（详见 `packaging/launcher.py`）。
+> 辅助进程会把整个 App 再启动一遍，形成无限自我复制的进程链（详见 `packaging/launcher.py`）；
+> ③ 给 `ui.run()` 传 `window_size` / `fullscreen` / `frameless` 会把 nicegui 的 `native`
+> 强制改成 `True`（`ui_run.py` 里三行 `if ...: native = True`），没有 pywebview 就直接
+> `exit(1)`，端口上什么都不监听——表现是浏览器 502，看起来像打包坏了。
+> 浏览器版的 `ui.run()` 因此只传 `host`/`port`，原生窗口的那一套参数只在 `V2T_NATIVE=1`
+> 分支里出现（见 `gui.py`）。
 
 ---
 
