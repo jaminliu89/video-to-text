@@ -39,3 +39,19 @@ gh api repos/jaminliu89/video-to-text/branches/main/protection
 ```
 
 若 API 拒绝或 Ruleset 未出现，标 **BLOCKED**，不得绕过直推 `main`。
+
+## 实读结果（2026-11-02 15:56 Asia/Shanghai）
+
+`PUT` + `GET` 均成功：
+
+| 字段 | 值 |
+|---|---|
+| `required_status_checks.contexts` | `["check"]` |
+| `required_status_checks.strict` | `true` |
+| `enforce_admins` | `true` |
+| `allow_force_pushes` | `false` |
+| `allow_deletions` | `false` |
+| `required_conversation_resolution` | `true` |
+| `required_approving_review_count` | `0` |
+
+Rulesets API 仍可能为空；本仓使用 **classic branch protection**，与 Prism 治理合同一致——以实读保护配置为准，不以文档自称代替。
