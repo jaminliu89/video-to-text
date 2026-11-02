@@ -41,7 +41,15 @@ python3 tests/test_distill_units.py  # exit 0, 50 pass
 3. 用新 PR `git revert <marker-commit>` 删掉标记，保留本文件。
 4. 回读 main：标记不存在，本文件仍在，`cli.py smoke` 仍为 0。
 
-演练完成后把 revert PR 与 merge SHA 补进文末。未完成前本段不是 PASS。
+演练记录（2026-11-02 16:20 Asia/Shanghai）：
+
+| 步骤 | SHA / PR |
+|---|---|
+| 证据 + 标记进入 main | [PR #12](https://github.com/jaminliu89/video-to-text/pull/12) merge `cca45e71d761c5c962c21267bbf1b5d4eeee44b5` |
+| 标记提交 | `e585f5f736f6788b47032e3ea9a5615dfdab9944`（`docs/sep/DRILL_MARKER.txt`） |
+| 回退提交 | `git revert e585f5f`（非 `-m`，该提交不是 merge commit） |
+
+回退 PR 合并后：`docs/sep/DRILL_MARKER.txt` 必须不在 main；本文件保留；`python3 cli.py smoke --json` 退出码 0。没有数据库需要恢复。
 
 ## 回滚
 
