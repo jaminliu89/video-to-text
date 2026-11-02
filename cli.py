@@ -259,6 +259,33 @@ def cmd_info(args):
     out_json(assets.get_asset_summary(asset_dir), args.json)
 
 
+def cmd_smoke(args):
+    """SEP 关键路径 smoke：asr-transcribe + distill-pipeline（不联网）"""
+    import importlib.util
+    import io
+    from contextlib import redirect_stdout, redirect_stderr
+
+    smoke_path = Path(__file__).resolve().parent / "scripts" / "sep_smoke.py"
+    if not smoke_path.is_file():
+        out_json({"error": f"缺少 {smoke_path}", "status": "BLOCKED"}, True)
+        sys.exit(2)
+    spec = importlib.util.spec_from_file_location("sep_smoke", smoke_path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    if args.json:
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf_out), redirect_stderr(buf_err):
+            code = mod.main()
+        out_json({"command": "smoke", "exit_code": code,
+                  "paths": ["asr-transcribe", "distill-pipeline"],
+                  "status": "PASS" if code == 0 else "FAIL",
+                  "detail": (buf_out.getvalue() + buf_err.getvalue())[-2000:]}, True)
+    else:
+        code = mod.main()
+    sys.exit(code)
+
+
 def main():
     parser = argparse.ArgumentParser(description="video2text Agent CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -329,6 +356,13 @@ def main():
     p_info.add_argument("input", help="资产目录路径")
     p_info.add_argument("--json", action="store_true")
     p_info.set_defaults(func=cmd_info)
+
+    p_smoke = sub.add_parser(
+        "smoke",
+        help="SEP 关键旧功能 smoke（asr 注册表 + distill 单测，不联网）",
+    )
+    p_smoke.add_argument("--json", action="store_true", help="JSON 摘要到 stdout")
+    p_smoke.set_defaults(func=cmd_smoke)
 
     args = parser.parse_args()
     args.func(args)

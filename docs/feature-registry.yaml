@@ -57,15 +57,20 @@ features:
     entrypoints:
       - file: cli.py
         symbol: main
+      - cli: cli.py smoke
     contracts:
       - SKILL.md
+      - docs/sep/smoke.md
     dependencies:
       - feature: asr-transcribe
       - feature: distill-pipeline
+      - scripts/sep_smoke.py
     tests:
       - tests/test_asr_units.py
       - tests/test_distill_units.py
-      - .github/workflows/ci.yml (cli.py engines/help)
+      - scripts/sep_smoke.py
+      - .github/workflows/ci.yml (cli.py engines/help/smoke)
+    notes: 2026-11-02 增补 smoke 子命令（SEP #08）
 
   - feature_id: video2text-cli
     title: 主 CLI / 深度拆解
