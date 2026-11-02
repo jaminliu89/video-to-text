@@ -1,0 +1,107 @@
+# SEP v1.0 feature registry — video-to-text
+# Last verified against code: 2026-11-02 (baseline main @ c4beed6)
+sep_version: "1.0"
+product: video-to-text
+owner: jaminliu89
+default_branch: main
+updated_at: "2026-11-02"
+
+features:
+  - feature_id: asr-transcribe
+    title: 多引擎音频转写
+    status: active
+    entrypoints:
+      - module: v2t/asr.py
+        symbol: transcribe
+      - cli: cli.py transcribe
+    contracts:
+      - docs/asr-engines.md
+    dependencies:
+      - faster-whisper (optional local)
+      - ffmpeg via v2t/ffmpeg.py
+    tests:
+      - tests/test_asr_units.py
+    notes: list_engines() 平台判定；缓存键含 engine+model
+
+  - feature_id: distill-pipeline
+    title: 文件夹蒸馏八阶段管线
+    status: active
+    entrypoints:
+      - module: v2t/distill.py
+      - cli: cli.py distill
+    contracts:
+      - docs/distill-method.md
+    dependencies:
+      - feature: asr-transcribe
+      - OpenAI-compatible LLM endpoint (config)
+    tests:
+      - tests/test_distill_units.py
+    notes: S0–S8 落盘 _work/；支持 resume
+
+  - feature_id: storyboard
+    title: 九宫格故事板抽帧
+    status: active
+    entrypoints:
+      - module: v2t/storyboard.py
+      - cli: cli.py storyboard
+    contracts: []
+    dependencies:
+      - ffmpeg
+    tests:
+      - tests/test_asr_units.py
+    notes: 单测文件主要覆盖 asr；storyboard 无独立单测文件（缺口）
+
+  - feature_id: cli-agent
+    title: Agent JSON CLI
+    status: active
+    entrypoints:
+      - file: cli.py
+        symbol: main
+    contracts:
+      - SKILL.md
+    dependencies:
+      - feature: asr-transcribe
+      - feature: distill-pipeline
+    tests:
+      - tests/test_asr_units.py
+      - tests/test_distill_units.py
+      - .github/workflows/ci.yml (cli.py engines/help)
+
+  - feature_id: video2text-cli
+    title: 主 CLI / 深度拆解
+    status: active
+    entrypoints:
+      - file: video2text.py
+    contracts: []
+    dependencies:
+      - feature: asr-transcribe
+      - config.py
+    tests:
+      - tests/test_distill_units.py
+    notes: E2E 转写需媒体与可选 API Key，CI 不跑全链路
+
+  - feature_id: gui
+    title: NiceGUI 本地 Web 界面
+    status: active
+    entrypoints:
+      - file: gui.py
+    contracts: []
+    dependencies:
+      - feature: video2text-cli
+    tests: []
+    notes: 无自动化 GUI 回归；CI dmg job 仅打包/自检
+
+  - feature_id: packaging-dmg
+    title: macOS DMG 打包与验证
+    status: active
+    entrypoints:
+      - scripts/build_dmg.sh
+      - scripts/verify_dmg.sh
+      - .github/workflows/ci.yml job dmg
+    contracts:
+      - README.md (分发章节)
+    dependencies:
+      - feature: gui
+    tests:
+      - .github/workflows/ci.yml (dmg, dist jobs)
+    notes: 需 macOS/Aqua 做完整窗口断言
