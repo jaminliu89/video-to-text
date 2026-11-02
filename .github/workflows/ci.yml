@@ -53,7 +53,9 @@ jobs:
           python tests/test_asr_units.py
 
       - name: SEP critical-path smoke (#06)
-        run: python scripts/sep_smoke.py
+        run: |
+          python scripts/sep_smoke.py
+          python cli.py smoke --json
 
       - name: Engine registry (Linux must not claim mlx)
         run: |
