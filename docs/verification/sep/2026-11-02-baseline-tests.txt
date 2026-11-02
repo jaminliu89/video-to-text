@@ -1,0 +1,6 @@
+Local baseline test log — video-to-text @ d1bf5a7
+Time: 2026-11-02 15:34 Asia/Shanghai
+Host: Ubuntu 24.04, Python 3.12.3, ffmpeg installed
+
+python tests/test_distill_units.py -> exit 0 (通过 50 / 失败 0)
+python tests/test_asr_units.py -> exit 0 (通过 52 项，失败 0 项)
