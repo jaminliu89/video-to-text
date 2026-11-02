@@ -15,8 +15,8 @@
 | main 上 CI `dmg`（macOS 安装包 job） | PASS — 同 run `125163108248` |
 | 本机 smoke（该 SHA 工作树） | PASS — `python3 cli.py smoke --json` exit 0；`scripts/sep_smoke.py` exit 0 |
 | 本机旧功能回归 | PASS — asr 52/0，distill 50/0 |
-| GitHub Release（`release.yml`，tag `v*`） | **NOT_RUN**。该工作流只在 tag 或手动 dispatch 时跑，本 SHA 没有 tag |
-| 生产 / 对外发布安装包 | **BLOCKED**。没有发版授权，没有公证会话，Linux 本机不能代替用户机器上的 DMG 安装 smoke |
+| GitHub Release（`release.yml` workflow_dispatch） | **PASS**（证据用，非产品发版授权）— [run 41416230636](https://github.com/jaminliu89/video-to-text/actions/runs/41416230636)；tag [`v0.6.0-sep-evidence`](https://github.com/jaminliu89/video-to-text/releases/tag/v0.6.0-sep-evidence) @ main `ee5df12` |
+| 用户机器 DMG 安装 / 公证 smoke | **NOT_RUN**。未在实体 macOS 上双击安装验证；`release_authorized: false` |
 | 数据库 / 对象存储副作用 | **NOT_APPLICABLE**。#08 只改 CLI 与文档，无迁移 |
 
 `dist` / `dmg` job 成功只证明该 SHA 的打包流水线退出码为 0，不等于已发布、已签名或已在用户机器安装。
