@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 import os
 import sqlite3
 import subprocess
@@ -33,14 +34,22 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+@contextmanager
 def _db():
     STATE.mkdir(parents=True, exist_ok=True)
     STAGING.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB, timeout=15, check_same_thread=False)
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA busy_timeout=15000")
-    return con
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA busy_timeout=15000")
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def initialize() -> None:
@@ -186,19 +195,17 @@ def _staged_input(media: dict) -> str:
     return str(link)
 
 
-def _run(job: dict) -> dict:
-    media = get_media(job["media_id"])
-    if not media:
-        raise ValueError("媒体被删除")
-    source = _staged_input(media)
-    cmd = [sys.executable, str(ROOT / "cli.py"), job["kind"], source]
-    if job["kind"] != "storyboard":
-        cmd += ["--asr", job["engine"]]
-    if job["kind"] == "distill":
-        cmd += ["--no-llm"]  # Remote reasoning requires an explicit future opt-in.
+def _cli(kind: str, source: str, engine: str) -> dict:
+    cmd = [sys.executable, str(ROOT / "cli.py"), kind, source]
+    if kind != "storyboard":
+        cmd += ["--asr", engine]
+    if engine == "qwen3-asr":
+        # Explicitly choose a local weight. A model='flash' fallback uploads data.
+        cmd += ["--asr-model", "0.6b"]
+    if kind == "distill":
+        cmd += ["--no-llm"]  # Never call an LLM configured in config.py/.env.
     cmd += ["--json"]
     env = os.environ.copy()
-    # Disable implicit API fallbacks in a task whose policy is local-only.
     for key in ("DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY", "ARK_API_KEY", "DISTILL_LLM_KEY"):
         env.pop(key, None)
     proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=6 * 3600)
@@ -208,6 +215,25 @@ def _run(job: dict) -> dict:
         return json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"CLI 没有返回合法 JSON: {proc.stdout[-400:]}") from exc
+
+
+def _run(job: dict) -> dict:
+    media = get_media(job["media_id"])
+    if not media:
+        raise ValueError("媒体被删除")
+    source = _staged_input(media)
+    if job["kind"] == "digest":
+        # Legacy digest invokes cloud summarization based on on-disk .env.
+        # Preserve local-only privacy by composing local ASR + storyboard instead.
+        transcript = _cli("transcribe", source, job["engine"])
+        shots = _cli("storyboard", source, job["engine"])
+        return {
+            "segments": transcript.get("segments", []),
+            "storyboard": shots,
+            "analysis_status": "NOT_INFERRED",
+            "note": "仅包含本地 ASR 和镜头故事板，未调用 LLM 进行解读",
+        }
+    return _cli(job["kind"], source, job["engine"])
 
 
 def _worker_loop() -> None:
