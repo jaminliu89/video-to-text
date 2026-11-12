@@ -28,6 +28,7 @@ cli.py — video2text 的 Agent 调用入口
   python cli.py info output/课程/视频名 --json
 """
 
+from contextlib import redirect_stdout
 import argparse
 import json
 import sys
@@ -96,7 +97,12 @@ def cmd_storyboard(args):
         out_json({"error": f"找不到: {video_path}"}, args.json); sys.exit(1)
 
     asset_dir = assets.get_asset_dir(video_path, args.category)
-    result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    if args.json:
+        # Keep stdout machine-readable; old storyboard implementation prints progress.
+        with redirect_stdout(sys.stderr):
+            result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    else:
+        result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
 
     out_json({
         "video": str(video_path),
@@ -129,7 +135,11 @@ def cmd_digest(args):
     assets.save_transcript(asset_dir, segments)
 
     # 2. 故事板
-    sb_result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    if args.json:
+        with redirect_stdout(sys.stderr):
+            sb_result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    else:
+        sb_result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
 
     # 3. LLM 摘要（需要 SILICONFLOW_API_KEY）
     summary = summarize_with_llm(segments, video_info, deep=args.deep)
