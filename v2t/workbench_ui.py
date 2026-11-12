@@ -301,7 +301,7 @@ def _export_job(job: dict, fmt: str) -> Path:
     return file
 
 
-@ui.page("/")
+@ui.page("/legacy")
 def workbench():
     ui.add_head_html(f"<style>{CSS}</style>")
     state = {"page": "studio", "selected": None, "engine": "auto", "filter": ""}
