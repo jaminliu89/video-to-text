@@ -40,6 +40,13 @@ jobs:
           python -m py_compile workbench.py v2t/workbench_service.py v2t/workbench_ui.py v2t/workbench_mcp.py v2t/workbench_reasoning.py
           python -m py_compile tests/test_workbench_service.py
 
+      - name: Product frontend syntax
+        run: |
+          node --check webui/core.js
+          node --check webui/app.js
+          test -f webui/index.html
+          test -f webui/styles.css
+
       - name: Import check
         run: |
           python -c "import config; print('config OK')"
