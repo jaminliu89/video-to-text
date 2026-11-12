@@ -628,3 +628,133 @@ async function saveDocument(){
     D.toast('文稿修改已保存到独立版本');render();
   }catch(err){D.toast(err.message,true);}
 }
+
+async function handleAction(event){
+  const el=event.target.closest('[data-action]');
+  if(!el)return;
+  const act=el.dataset.action;
+  if(act==='close-modal'){D.closeModal();return;}
+  if(act==='import'){showImport();return;}
+  if(act==='choose'){D.closeModal();await choose(el.dataset.id);return;}
+  if(['projects','studio','documents','jobs','capabilities'].includes(act)){
+    setView(act);return;
+  }
+  if(act==='refresh'){
+    try{await D.refreshJobs();await D.loadMediaResults();render();D.toast('任务和证据已刷新');}
+    catch(err){D.toast(err.message,true);}
+    return;
+  }
+  if(act.startsWith('run-')){await start(act.slice(4));return;}
+  if(act==='reason'){await confirmReasoning();return;}
+  if(act==='seek'){seek(el.dataset.time);return;}
+  if(act==='tab'){
+    S.currentTab=el.dataset.tab;
+    $$('.tab').forEach(t=>{
+      t.classList.toggle('active',t.dataset.tab===S.currentTab);
+      t.setAttribute('aria-selected',String(t.dataset.tab===S.currentTab));
+    });
+    renderEvidence();return;
+  }
+  if(act==='edit-evidence'){await editEvidence(el.dataset.index,el.dataset.channel);return;}
+  if(act==='export-md'){
+    const job=resolveMediaJobs().digest||resolveMediaJobs().transcribe;
+    if(job)try{await D.exportJob(job.id,'md');}
+    catch(err){D.toast(err.message,true);}
+    return;
+  }
+  if(act==='pick-document'){
+    if(editingDocumentDirty && !window.confirm('当前文稿有未保存修改。确定切换吗？'))return;
+    S.activeDocument=el.dataset.id;S.docDraft='';
+    editingDocumentDirty=false;S.docMode='read';render();return;
+  }
+  if(act==='download-record'){
+    try{await D.exportJob(el.dataset.id,'md');}
+    catch(err){D.toast(err.message,true);}
+    return;
+  }
+  if(act==='doc-mode'){
+    if(S.docMode==='edit'&&editingDocumentDirty&&el.dataset.mode==='read'&&
+       !window.confirm('文稿有未保存修改。确定放弃吗？'))return;
+    S.docMode=el.dataset.mode;
+    S.docDraft=S.docMode==='edit'?(S.results.get(S.activeDocument)?.analysis_markdown||''):'';
+    editingDocumentDirty=false;render();return;
+  }
+  if(act==='doc-save'){await saveDocument();return;}
+  if(act==='doc-download'){
+    if(editingDocumentDirty){D.toast('请先保存文稿修改，再导出',true);return;}
+    try{await D.exportJob(S.activeDocument,'md');}
+    catch(err){D.toast(err.message,true);}
+    return;
+  }
+  if(act==='retry-job'){
+    try{await D.api('/jobs/'+el.dataset.id+'/retry',{method:'POST'});
+      await D.refreshJobs();render();D.toast('任务已重新提交');
+    }catch(err){D.toast(err.message,true);}
+    return;
+  }
+  if(act==='cancel-job'){
+    try{await D.api('/jobs/'+el.dataset.id+'/cancel',{method:'POST'});
+      await D.refreshJobs();render();D.toast('已取消排队任务');
+    }catch(err){D.toast(err.message,true);}
+    return;
+  }
+  if(act==='inspect-job'){
+    await choose(el.dataset.media);
+    if(el.dataset.id&&S.jobs.find(j=>j.id===el.dataset.id)?.kind==='reason')setView('documents');
+    return;
+  }
+  if(act==='copy-mcp'){await D.copy('python -m v2t.workbench_mcp');return;}
+  if(act==='reload-page'){window.location.reload();}
+}
+async function boot(){
+  D.renderStaticIcons();
+  $$('.side-navigation [data-view]').forEach(el=>{
+    el.addEventListener('click',()=>setView(el.dataset.view));
+  });
+  $('#top-import').addEventListener('click',showImport);
+  $('#global-search').addEventListener('click',showSearch);
+  $('#menu-toggle').innerHTML=I('menu',20);
+  $('#menu-toggle').addEventListener('click',
+    ()=>document.body.classList.toggle('menu-open'));
+  $('#content').addEventListener('click',e=>{
+    handleAction(e).catch(err=>D.toast(err.message,true));
+  });
+  $('#modal').addEventListener('click',e=>{
+    handleAction(e).catch(err=>D.toast(err.message,true));
+  });
+  $('#upload-input').addEventListener('change',e=>{
+    uploadFiles(Array.from(e.target.files));e.target.value='';
+  });
+  window.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
+      e.preventDefault();showSearch();
+    }else if(e.key==='Escape'){
+      D.closeModal();document.body.classList.remove('menu-open');
+    }
+  });
+  try{
+    await D.load();
+    const requested=(window.location.hash||'').slice(1);
+    if(['studio','documents','jobs','capabilities','projects'].includes(requested))S.view=requested;
+    await D.loadMediaResults();
+    D.nav(S.view);
+    setInterval(async()=>{
+      if(pollBusy||!S.loaded||document.hidden)return;
+      pollBusy=true;
+      try{
+        const changed=await D.refreshJobs();
+        if(changed){
+          await D.loadMediaResults();
+          if(['studio','jobs','documents','home','projects'].includes(S.view))render();
+        }
+      }catch(_e){}
+      finally{pollBusy=false;}
+    },3000);
+  }catch(err){
+    $('#content').innerHTML='<div class="card">'+empty('alert','工作台连接失败',
+      err.message||'服务暂不可用',btn('重新连接','reload-page','button-primary','refresh'))+'</div>';
+    D.toast(err.message||'初始化失败',true);
+  }
+}
+document.addEventListener('DOMContentLoaded',boot);
+})();
