@@ -45,6 +45,11 @@ def save_provider(base_url: str, model: str, api_key: str) -> dict:
         raise ValueError("远端推理 API 必须使用 HTTPS")
     if not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("不接受带用户名密码的 URL")
+    if not api_key and CONFIG.exists():
+        old = json.loads(CONFIG.read_text(encoding="utf-8"))
+        # Reuse a key only for the exact same host/provider endpoint.
+        if old.get("base_url") == base_url:
+            api_key = old.get("api_key", "")
     if not local_host and not api_key:
         raise ValueError("远端 API 需要密钥")
     STATE.mkdir(parents=True, exist_ok=True)
