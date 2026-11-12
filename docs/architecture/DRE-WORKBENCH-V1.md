@@ -31,8 +31,20 @@ User journey: **Import media → choose analysis → inspect time-aligned eviden
 | MCP | SDK v2 MCPServer adapter using authenticated loopback REST API |
 | Go / LangGraph | Not needed for a local deterministic media pipeline |
 | WASM | Optional for heavier waveform/interactive media widgets, not needed for initial UI |
-| Apple Vision | Candidate for native OCR adapter, **not yet integrated** |
+| Apple Vision | Swift native OCR adapter + Python job implemented, **macOS runtime verification pending** |
 | Qwen3-VL / MLX | Candidate visual model, **not yet integrated** |
+
+## Product UI hierarchy
+
+The homepage opens Studio, not a toolbox. Four navigation areas:
+
+1. **Studio**: active media, playable video, tasks, seekable ASR and OCR evidence.
+2. **Library**: registered local videos and folder-based projects.
+3. **Tasks and Deliverables**: persistent jobs, retries, complete exports.
+4. **Capabilities**: installed models and optional API/MCP access.
+
+The primary action is transcription; OCR, storyboard and evidence composition
+are secondary. All real content comes from persisted job results, not mock data.
 
 ## Start
 
@@ -43,7 +55,7 @@ python -m pip install -r requirements.txt
 python workbench.py
 ~~~
 
-Open http://127.0.0.1:8765 . The legacy entrypoint remains \`python gui.py\`.
+Open http://127.0.0.1:8765 . The legacy entrypoint remains `python gui.py`.
 
 Optional stdio MCP adapter (Python SDK v2):
 
@@ -52,21 +64,23 @@ python -m pip install 'mcp>=2,<3'
 python -m v2t.workbench_mcp
 ~~~
 
-API requests require \`Authorization: Bearer <token>\`.
+API requests require `Authorization: Bearer <token>`.
 The token is stored with mode 0600 in
-\`~/Library/Application Support/VideoToText/workbench/api_token\`.
+`~/Library/Application Support/VideoToText/workbench/api_token`.
 Never commit or log this token.
 
 ## API
 
-- \`GET /api/v1/capabilities\`
-- \`GET /api/v1/media\`
-- \`POST /api/v1/media\` with \`{"path":"/absolute/media/path"}\`
-- \`POST /api/v1/jobs\` with \`{"media_id":"...", "kind":"transcribe", "engine":"auto"}\`
-- \`GET /api/v1/jobs\`, \`GET /api/v1/jobs/{job_id}\`
-- \`POST /api/v1/jobs/{job_id}/cancel\` (only queued jobs)
+- `GET /api/v1/capabilities`
+- `GET /api/v1/media`
+- `POST /api/v1/media` with `{"path":"/absolute/media/path"}`
+- `POST /api/v1/jobs` with `{"media_id":"...", "kind":"transcribe", "engine":"auto"}`
+- `GET /api/v1/jobs`, `GET /api/v1/jobs/{job_id}` (status only)
+- `GET /api/v1/jobs/{job_id}/result?channel=segments&offset=0&limit=50`
+- For OCR, submit `kind=ocr` on macOS with Xcode Command Line Tools
+- `POST /api/v1/jobs/{job_id}/cancel` (only queued jobs)
 
-Note: \`POST /api/v1/media\` is restricted to \`V2T_AGENT_ALLOWED_ROOTS\`
+Note: `POST /api/v1/media` is restricted to `V2T_AGENT_ALLOWED_ROOTS`
 as an explicit colon-separated allowlist. The interactive Web UI can import
 other local paths through direct user action.
 
@@ -78,5 +92,6 @@ other local paths through direct user action.
 4. API token, media path traversal, symlink/allowlist, no-cloud fallback tests.
 5. Crash and restart: queued/running job recovery, retried tasks.
 6. Existing GUI / CLI / DMG workflows stay green.
-7. Real Apple Vision OCR, local VLM and full-fidelity evidence need separate
-   implementation and hardware verification before claiming those features.
+7. Apple Vision OCR is now implemented but needs macOS hardware verification;
+   local VLM, cloud reasoning with explicit approval and full-fidelity visual
+   evidence still require separate implementation and E2E acceptance.
