@@ -118,6 +118,25 @@ def api_job_result(job_id: str, offset: int = 0, limit: int = 50,
     }
 
 
+@app.get("/api/v1/jobs/{job_id}/document")
+def api_job_document(job_id: str, offset: int = 0, limit: int = 6000,
+                     authorization: str | None = Header(default=None)):
+    authorize(authorization)
+    job = svc.get_job(job_id)
+    if not job or job["state"] != "done":
+        raise HTTPException(status_code=404, detail="Finished job not found")
+    data = _display_result(job) or {}
+    doc = data.get("analysis_markdown") or ""
+    if not isinstance(doc, str):
+        doc = ""
+    offset, limit = max(0, offset), max(1, min(limit, 10000))
+    return {
+        "job_id": job_id, "offset": offset, "limit": limit,
+        "total_chars": len(doc), "content": doc[offset:offset + limit],
+        "has_more": offset + limit < len(doc),
+    }
+
+
 @app.post("/api/v1/jobs/{job_id}/cancel")
 def api_job_cancel(job_id: str, authorization: str | None = Header(default=None)):
     authorize(authorization)
