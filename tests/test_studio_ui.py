@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from nicegui import app
 from v2t import workbench_service as svc
 from v2t import studio_api as studio
+from v2t import workbench_ui as legacy_api  # register /api/v1 in the same app as production
 
 with tempfile.TemporaryDirectory(prefix="dre-studio-api-") as tmp:
     base = Path(tmp)
