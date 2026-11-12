@@ -87,15 +87,16 @@ def _chat(system: str, user: str, max_tokens: int = 3500) -> str:
 
 
 def _source_lines(data: dict) -> list[str]:
-    lines = []
+    timeline = []
     for channel, label in (("segments", "ASR"), ("ocr_segments", "OCR")):
         for idx, item in enumerate(data.get(channel, []) or []):
             text = str(item.get("text") or "").strip()
-            if not text:
-                continue
-            t = float(item.get("start") or 0)
-            lines.append(f"[{label}-{idx+1:05} @ {t:.1f}s] {text}")
-    return lines
+            if text:
+                t = float(item.get("start") or 0)
+                timeline.append((t, f"[{label}-{idx+1:05} @ {t:.1f}s] {text}"))
+    # Speech and visible text must share one chronological evidence timeline.
+    timeline.sort(key=lambda x: x[0])
+    return [text for _, text in timeline]
 
 
 def generate(source_data: dict, media_title: str) -> dict:
