@@ -25,6 +25,10 @@ with tempfile.TemporaryDirectory(prefix="dre-studio-api-") as tmp:
     studio.ensure_tables()
 
     client = TestClient(app, base_url="http://127.0.0.1:8765")
+    # Default URL must open the product UI rather than the legacy toolbox.
+    home = client.get("/", follow_redirects=True)
+    assert home.status_code == 200, home.text[:200]
+    assert "DRE Studio" in home.text
     page = client.get("/studio")
     assert page.status_code == 200, page.text[:300]
     assert "DRE Studio" in page.text
