@@ -56,8 +56,14 @@ def api_media(authorization: str | None = Header(default=None)):
 @app.post("/api/v1/media")
 def api_import(payload: ImportPayload, authorization: str | None = Header(default=None)):
     authorize(authorization)
+    allowed = [Path(x).expanduser().resolve() for x in os.environ.get("V2T_AGENT_ALLOWED_ROOTS", "").split(os.pathsep) if x.strip()]
+    if not allowed:
+        raise HTTPException(status_code=403, detail="请先设置 V2T_AGENT_ALLOWED_ROOTS，MCP 不能默认读取任意本地目录")
     try:
-        return svc.import_media(payload.path)
+        requested = Path(payload.path).expanduser().resolve(strict=True)
+        if not any(requested.is_relative_to(root) for root in allowed):
+            raise HTTPException(status_code=403, detail="路径不在 Agent 授权范围内")
+        return svc.import_media(str(requested))
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -227,8 +233,10 @@ def workbench():
             state["page"] = "studio"
             ui.notify(f"已加入媒体库：{asset['title']}", type="positive")
             render.refresh()
+            return True
         except Exception as exc:
             ui.notify(str(exc), type="negative")
+            return False
 
     def start(kind):
         try:
@@ -324,7 +332,6 @@ def workbench():
 
             @ui.refreshable
             def render():
-                ui.add_head_html(f"<style>{CSS}</style>")
                 with ui.row().classes("v2t-top"):
                     with ui.column().style("gap:0"):
                         ui.label({"studio":"分析工作台","library":"媒体项目库","tasks":"任务与交付","capability":"能力中心"}[state["page"]]).classes("v2t-h1")
@@ -352,7 +359,7 @@ def workbench():
                     entry = ui.input(label="本地文件 / 文件夹路径", placeholder="/Users/.../Movies/video.mp4").props("outlined").classes("w-full")
                     with ui.row().classes("justify-end w-full"):
                         ui.button("取消", on_click=d.close).props("flat")
-                        ui.button("加入媒体库", on_click=lambda: (import_path(entry.value or ""), d.close())).classes("v2t-btn-primary")
+                        ui.button("加入媒体库", on_click=lambda: d.close() if import_path(entry.value or "") else None).classes("v2t-btn-primary")
                 d.open()
 
             def show_library():
@@ -408,7 +415,7 @@ def workbench():
                     if media["kind"] == "video":
                         ui.button("开始转写", icon="record_voice_over", on_click=lambda: start("transcribe")).classes("v2t-btn-primary").props("no-caps")
                         ui.button("镜头故事板", icon="view_module", on_click=lambda: start("storyboard")).classes("v2t-btn-soft").props("no-caps")
-                        ui.button("生成解读", icon="description", on_click=lambda: start("digest")).classes("v2t-btn-soft").props("no-caps")
+                        ui.button("汇总证据", icon="description", on_click=lambda: start("digest")).classes("v2t-btn-soft").props("no-caps").tooltip("仅本地语音+镜头汇总，不会调用云端 LLM")
                     else:
                         ui.button("蒸馏整个文件夹", icon="auto_awesome", on_click=lambda: start("distill")).classes("v2t-btn-primary").props("no-caps")
                     ui.select(options={"auto":"自动选择","mlx-whisper":"MLX Whisper","faster-whisper":"faster-whisper","qwen3-asr":"Qwen3-ASR 本地","sensevoice":"SenseVoice"},
@@ -448,7 +455,7 @@ def workbench():
                         ui.label("原始转写 · 点击定位").classes("v2t-section")
                         evidence()
                         ui.separator()
-                        ui.label("OCR 与视觉理解将在完成原生适配器验收后启用；当前不会输出伪造的分析结果。").classes("v2t-muted")
+                        ui.label("Apple Vision OCR 和本地 VLM 尚未接通。能力中心会标记真实状态，未识别的信息不作猜测。").classes("v2t-muted")
 
             def show_capabilities():
                 caps = svc.capabilities()
