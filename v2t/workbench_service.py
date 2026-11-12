@@ -157,8 +157,14 @@ def submit_reasoning(media_id: str, source_job_id: str, consent: bool = False) -
     if not consent:
         raise PermissionError("必须明确确认文字证据传给推理 API")
     from v2t.workbench_reasoning import provider_info
-    if not provider_info().get("configured"):
+    provider = provider_info()
+    if not provider.get("configured"):
         raise ValueError("请先在能力中心配置推理 API")
+    approval_scope = json.dumps({
+        "scope": "asr_ocr_text_only",
+        "base_url": provider.get("base_url"),
+        "model": provider.get("model")
+    }, ensure_ascii=False)
     source = get_job(source_job_id)
     if not source or source["media_id"] != media_id or source["kind"] != "digest" or source["state"] != "done":
         raise ValueError("必须先完成该视频的本地证据汇总")
@@ -170,7 +176,7 @@ def submit_reasoning(media_id: str, source_job_id: str, consent: bool = False) -
         )
         con.execute(
             "INSERT INTO reasoning_approvals(job_id,source_job_id,media_id,scope,approved_at) VALUES(?,?,?,?,?)",
-            (job_id, source_job_id, media_id, "asr_ocr_text_only", now()),
+            (job_id, source_job_id, media_id, approval_scope, now()),
         )
     start_worker()
     return get_job(job_id)
@@ -357,13 +363,36 @@ def _run(job: dict) -> dict:
             approval = con.execute(
                 "SELECT * FROM reasoning_approvals WHERE job_id=?", (job["id"],)
             ).fetchone()
-        if not approval or approval["media_id"] != media["id"] or approval["scope"] != "asr_ocr_text_only":
+        if not approval or approval["media_id"] != media["id"]:
             raise PermissionError("找不到有效的数据外发授权")
+        try:
+            approved = json.loads(approval["scope"])
+        except (ValueError, TypeError):
+            raise PermissionError("旧授权记录未绑定模型，需要重新授权")
+        from v2t.workbench_reasoning import provider_info, generate
+        provider = provider_info()
+        if (approved.get("scope") != "asr_ocr_text_only" or
+            approved.get("base_url") != provider.get("base_url") or
+            approved.get("model") != provider.get("model")):
+            raise PermissionError("授权后推理供应商或模型已变化，请重新确认")
         src_job = get_job(approval["source_job_id"])
         if not src_job or src_job["state"] != "done" or src_job["media_id"] != media["id"]:
             raise RuntimeError("原始证据任务不可用")
-        from v2t.workbench_reasoning import generate
-        return generate(json.loads(src_job["result"]), media["title"])
+        source_data = json.loads(src_job["result"])
+        # Reviewed text is a separate overlay; never overwrite raw ASR/OCR output.
+        try:
+            with _db() as con:
+                corrections = con.execute(
+                    "SELECT channel,item_index,corrected_text FROM evidence_edits WHERE job_id=?",
+                    (src_job["id"],)
+                ).fetchall()
+        except sqlite3.OperationalError:
+            corrections = []
+        for change in corrections:
+            channel, idx = change["channel"], change["item_index"]
+            if channel in ("segments", "ocr_segments") and 0 <= idx < len(source_data.get(channel, [])):
+                source_data[channel][idx]["text"] = change["corrected_text"]
+        return generate(source_data, media["title"])
     source = _staged_input(media)
     if job["kind"] == "ocr":
         return _ocr_video(source, media["id"])
