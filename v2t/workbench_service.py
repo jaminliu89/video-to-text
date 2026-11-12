@@ -193,8 +193,10 @@ def _staged_input(media: dict) -> str:
     return str(path)
 
 
-def _cli(kind: str, source: str, engine: str) -> dict:
+def _cli(kind: str, source: str, engine: str, media_id: str = "") -> dict:
     cmd = [sys.executable, str(ROOT / "cli.py"), kind, source]
+    if media_id:
+        cmd += ["--category", "dre-" + media_id]
     if kind != "storyboard":
         cmd += ["--asr", engine]
     if engine == "qwen3-asr":
@@ -324,8 +326,8 @@ def _run(job: dict) -> dict:
     if job["kind"] == "digest":
         # Legacy digest invokes cloud summarization based on on-disk .env.
         # Preserve local-only privacy by composing only explicitly local abilities.
-        transcript = _cli("transcribe", source, job["engine"])
-        shots = _cli("storyboard", source, job["engine"])
+        transcript = _cli("transcribe", source, job["engine"], media["id"])
+        shots = _cli("storyboard", source, job["engine"], media["id"])
         ocr, ocr_status = {}, "UNAVAILABLE"
         if sys.platform == "darwin" and shutil.which("swiftc"):
             try:
@@ -341,7 +343,7 @@ def _run(job: dict) -> dict:
             "analysis_status": "NOT_INFERRED",
             "note": "本地 ASR / OCR / 故事板证据汇总；没有进行云端 LLM 推理",
         }
-    return _cli(job["kind"], source, job["engine"])
+    return _cli(job["kind"], source, job["engine"], media["id"])
 
 
 def _worker_loop() -> None:
