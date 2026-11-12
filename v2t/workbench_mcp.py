@@ -83,5 +83,13 @@ def local_media_read_segments(job_id: str, channel: str = "segments", offset: in
     return _call("GET", f"/jobs/{job_id}/result?channel={channel}&offset={offset}&limit={limit}")
 
 
+@mcp.tool()
+def local_media_read_document(job_id: str, offset: int = 0, limit: int = 6000) -> dict:
+    """Read a page of the user-authorized reasoning document, without overloading context."""
+    if not 0 <= offset <= 100000000 or not 1 <= limit <= 10000:
+        raise ValueError("offset/limit 超出允许范围")
+    return _call("GET", f"/jobs/{job_id}/document?offset={offset}&limit={limit}")
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
