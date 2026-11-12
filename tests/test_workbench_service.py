@@ -22,6 +22,11 @@ with tempfile.TemporaryDirectory(prefix="dre-workbench-") as tmp:
 
     path = base / "sample.mp4"
     path.write_bytes(b"fake-media-for-service-tests")
+    from cli import _media_cache_key
+    sibling = base / "other"
+    sibling.mkdir()
+    (sibling / "sample.mp4").write_bytes(b"different-video-same-filename")
+    assert _media_cache_key(path) != _media_cache_key(sibling / "sample.mp4")
     media = w.import_media(str(path))
     assert media["kind"] == "video"
     assert w.import_media(str(path))["id"] == media["id"]
