@@ -50,7 +50,7 @@ function projectCard(media){
   const latest=media.latest_job||D.jobsFor(media.id)[0];
   return '<button type="button" class="card project-card" data-action="choose" data-id="'+h(media.id)+'">'+
    '<div class="project-cover">'+(folder?I('folder',38):
-    '<img loading="lazy" src="/ui-api/media/'+encodeURIComponent(media.id)+'/thumbnail" alt="" onerror="this.style.display=\'none\'">'+I('film',35))+
+    '<img loading="lazy" src="/ui-api/media/'+encodeURIComponent(media.id)+'/thumbnail" alt="">'+I('film',35))+
     '<span class="project-kind">'+(folder?'批量项目':'本地视频')+'</span></div>'+
    '<div class="project-info"><div class="project-name" title="'+h(media.title)+'">'+h(media.title)+'</div>'+
     '<div class="project-path" title="'+h(media.source)+'">'+h(media.source)+'</div>'+
@@ -571,7 +571,7 @@ async function confirmReasoning(){
       D.closeModal();await D.refreshJobs();render();
       D.toast('文稿生成任务已提交。可在任务中心查看状态。');
     }catch(err){submit.disabled=false;D.toast(err.message,true);}
-  },{once:true});
+  });
 }
 async function start(kind){
   try{await D.startJob(kind,S.engine);render();}
