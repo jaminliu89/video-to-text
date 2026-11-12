@@ -209,6 +209,51 @@ def _human_size(value):
     return f"{amount:.1f} TB"
 
 
+def _export_job(job: dict, fmt: str) -> Path:
+    """Write a durable, non-truncated artifact for the active user to download."""
+    data = _display_result(job)
+    if data is None:
+        raise ValueError("任务尚未产生结果")
+    output = svc.STATE / "exports"
+    output.mkdir(parents=True, exist_ok=True)
+    ext = "json" if fmt == "json" else "md"
+    file = output / f"{job['id']}.{ext}"
+    if fmt == "json":
+        content = json.dumps(data, ensure_ascii=False, indent=2)
+    else:
+        lines = [
+            "# DRE Media Workbench · 视频证据文档",
+            "",
+            f"- 任务：{job['id']}",
+            f"- 类型：{job['kind']}",
+            f"- 引擎：{job['engine']}",
+            f"- 状态：{job['state']}",
+            "",
+        ]
+        segments = data.get("segments") or []
+        if segments:
+            lines.extend(["## 原始语音转写", ""])
+            for s in segments:
+                t = int(float(s.get("start", 0)))
+                lines.append(f"[{t//60:02}:{t%60:02}] {s.get('text','')}")
+            lines.append("")
+        ocr = data.get("ocr_segments") or []
+        if ocr:
+            lines.extend(["## 画面文字（采样 OCR）", ""])
+            for s in ocr:
+                t = int(float(s.get("start", 0)))
+                lines.append(f"[{t//60:02}:{t%60:02}] {s.get('text','')}")
+            lines.append("")
+        if data.get("analysis_status"):
+            lines.append(f"> AI 推理状态：{data['analysis_status']}（原始事实不可由推理覆盖）")
+        if not segments and not ocr:
+            lines.extend(["## 结构化结果", "", "~~~json",
+                          json.dumps(data, ensure_ascii=False, indent=2), "~~~"])
+        content = "\n".join(lines)
+    file.write_text(content, encoding="utf-8")
+    return file
+
+
 @ui.page("/")
 def workbench():
     ui.add_head_html(f"<style>{CSS}</style>")
@@ -464,7 +509,10 @@ def workbench():
                                 text = json.dumps(result, ensure_ascii=False, indent=2)
                                 with ui.scroll_area().style("height:230px;width:100%;background:#f8faf8;border-radius:9px;padding:9px"):
                                     ui.label(text[:10000]).style("font:11px/1.6 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word")
-                                ui.button("复制 JSON 结果", icon="content_copy", on_click=lambda t=text: ui.run_javascript("navigator.clipboard.writeText("+json.dumps(t)+")")).props("flat no-caps")
+                                with ui.row().style("gap:8px;flex-wrap:wrap"):
+                                    ui.button("下载全文 Markdown", icon="download", on_click=lambda j=latest_done: ui.download(_export_job(j, "md"))).classes("v2t-btn-soft").props("no-caps")
+                                    ui.button("下载 JSON", icon="data_object", on_click=lambda j=latest_done: ui.download(_export_job(j, "json"))).props("flat no-caps")
+                                    ui.button("复制 JSON 结果", icon="content_copy", on_click=lambda t=text: ui.run_javascript("navigator.clipboard.writeText("+json.dumps(t)+")")).props("flat no-caps")
                         else:
                             ui.label("完成一次真实分析后，这里展示结果。").classes("v2t-muted")
                     with ui.column().classes("v2t-card v2t-card-pad").style("gap:13px;min-width:0"):
