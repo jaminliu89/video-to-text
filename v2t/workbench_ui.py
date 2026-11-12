@@ -213,12 +213,16 @@ def _human_size(value):
 def workbench():
     ui.add_head_html(f"<style>{CSS}</style>")
     state = {"page": "studio", "selected": None, "engine": "auto", "filter": ""}
+    nav_buttons = {}
     items = svc.list_media()
     if items:
         state["selected"] = items[0]["id"]
 
     def go(page):
         state["page"] = page
+        for name, button in nav_buttons.items():
+            button.classes(add="v2t-nav-active" if name == page else None,
+                           remove="v2t-nav-active" if name != page else None)
         render.refresh()
 
     def pick(media_id):
@@ -263,6 +267,7 @@ def workbench():
                 ):
                     btn = ui.button(label, icon=icon, on_click=lambda p=page: go(p)).props("flat no-caps align=left")
                     btn.classes("v2t-nav-btn" + (" v2t-nav-active" if page == state["page"] else ""))
+                    nav_buttons[page] = btn
             ui.space()
             with ui.column().classes("v2t-privacy").style("gap:6px"):
                 with ui.row().classes("items-center").style("gap:6px"):
@@ -282,7 +287,7 @@ def workbench():
                 for job in rows[:10]:
                     with ui.row().classes("w-full items-center justify-between v2t-task"):
                         with ui.column().style("gap:2px;min-width:0"):
-                            ui.label({"transcribe":"语音转写","storyboard":"镜头故事板","digest":"视频解读","distill":"知识蒸馏"}.get(job["kind"],job["kind"])).style("font-size:12px;font-weight:600")
+                            ui.label({"transcribe":"语音转写","storyboard":"镜头故事板","digest":"本地证据汇总","distill":"知识蒸馏","ocr":"画面文字 OCR"}.get(job["kind"],job["kind"])).style("font-size:12px;font-weight:600")
                             ui.label(job["id"][:10]+" · "+job["engine"]).classes("v2t-muted")
                         with ui.column().classes("items-end").style("gap:5px"):
                             css = "v2t-done" if job["state"]=="done" else "v2t-running" if job["state"]=="running" else "v2t-error" if job["state"] in ("error","interrupted") else "v2t-queued"
@@ -322,7 +327,18 @@ def workbench():
                     ui.label("分析已完成。请查看任务结果文件。").classes("v2t-muted")
                     ui.code(json.dumps(data, ensure_ascii=False, indent=2)[:1600]).classes("text-xs")
                 else:
-                    ui.label("请选择上方的「开始转写」，生成带时间戳的证据。").classes("v2t-muted")
+                    ui.label("请选择「开始转写」，生成带时间戳的语音证据。").classes("v2t-muted")
+                ocr_job = next((j for j in svc.list_jobs(asset["id"]) if j["kind"] in ("ocr", "digest") and j["state"] == "done"), None)
+                ocr_data = _display_result(ocr_job) if ocr_job else None
+                if ocr_data and ocr_data.get("ocr_segments"):
+                    ui.separator()
+                    ui.label("画面文字 / Apple Vision").classes("v2t-section")
+                    with ui.scroll_area().style("height:230px;width:100%"):
+                        for segment in ocr_data["ocr_segments"][:800]:
+                            ts = float(segment.get("start") or 0)
+                            with ui.column().classes("v2t-evidence-row").style("gap:4px;width:100%").on("click", lambda _,t=ts: video_seek(t)):
+                                ui.label(f"{int(ts//60):02}:{int(ts%60):02} · OCR").style("font-size:10px;color:#12816d;font-weight:700")
+                                ui.label(segment.get("text") or "").style("font-size:12px;line-height:1.65;white-space:normal")
 
             video_holder = {"el": None}
 
@@ -415,6 +431,7 @@ def workbench():
                     if media["kind"] == "video":
                         ui.button("开始转写", icon="record_voice_over", on_click=lambda: start("transcribe")).classes("v2t-btn-primary").props("no-caps")
                         ui.button("镜头故事板", icon="view_module", on_click=lambda: start("storyboard")).classes("v2t-btn-soft").props("no-caps")
+                        ui.button("画面文字 OCR", icon="text_snippet", on_click=lambda: start("ocr")).classes("v2t-btn-soft").props("no-caps")
                         ui.button("汇总证据", icon="description", on_click=lambda: start("digest")).classes("v2t-btn-soft").props("no-caps").tooltip("仅本地语音+镜头汇总，不会调用云端 LLM")
                     else:
                         ui.button("蒸馏整个文件夹", icon="auto_awesome", on_click=lambda: start("distill")).classes("v2t-btn-primary").props("no-caps")
@@ -455,7 +472,7 @@ def workbench():
                         ui.label("原始转写 · 点击定位").classes("v2t-section")
                         evidence()
                         ui.separator()
-                        ui.label("Apple Vision OCR 和本地 VLM 尚未接通。能力中心会标记真实状态，未识别的信息不作猜测。").classes("v2t-muted")
+                        ui.label("OCR 以抽帧方式识别，可能遗漏短暂文字；视觉大模型尚未接通，未识别的信息不作猜测。").classes("v2t-muted")
 
             def show_capabilities():
                 caps = svc.capabilities()
