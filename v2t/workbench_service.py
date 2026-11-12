@@ -134,7 +134,7 @@ def submit_job(media_id: str, kind: str, engine: str = "auto") -> dict:
         raise ValueError(f"不支持的任务: {kind}")
     if (media["kind"] == "folder") != (kind == "distill"):
         raise ValueError("文件夹仅支持知识蒸馏；单视频支持转写、OCR、故事板及证据汇总")
-    engine = resolve_engine(engine)
+    engine = "none" if kind in ("ocr", "storyboard") else resolve_engine(engine)
     job_id = uuid.uuid4().hex[:20]
     with _lock, _db() as con:
         con.execute(
