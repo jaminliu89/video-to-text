@@ -17,7 +17,8 @@ User journey: **Import media → choose analysis → inspect time-aligned eviden
   shows unintegrated features. Never fabricate completion or model availability.
 - UI, REST and optional MCP adapter all call the same workbench service.
 - Default inference policy is local-only; current distill job uses --no-llm.
-  Cloud augmentation requires an explicit provider policy and separate review.
+  API augmentation is user-approved per video and sends only extracted ASR/OCR text.
+  No video bytes are sent to the selected model endpoint.
 - The existing legacy NiceGUI app, CLI, tests and DMG entrypoint are preserved.
 
 ## Open-source engineering decisions
@@ -33,6 +34,7 @@ User journey: **Import media → choose analysis → inspect time-aligned eviden
 | WASM | Optional for heavier waveform/interactive media widgets, not needed for initial UI |
 | Apple Vision | Swift native OCR adapter + Python job implemented, **macOS runtime verification pending** |
 | Qwen3-VL / MLX | Candidate visual model, **not yet integrated** |
+| Reasoning API | OpenAI-compatible provider; explicit consent; chunked evidence-grounded writing |
 
 ## Product UI hierarchy
 
@@ -78,6 +80,7 @@ Never commit or log this token.
 - `GET /api/v1/jobs`, `GET /api/v1/jobs/{job_id}` (status only)
 - `GET /api/v1/jobs/{job_id}/result?channel=segments&offset=0&limit=50`
 - For OCR, submit `kind=ocr` on macOS with Xcode Command Line Tools
+- `GET /api/v1/jobs/{job_id}/document?offset=0&limit=6000` for paged writings
 - `POST /api/v1/jobs/{job_id}/cancel` (only queued jobs)
 
 Note: `POST /api/v1/media` is restricted to `V2T_AGENT_ALLOWED_ROOTS`
@@ -95,3 +98,12 @@ other local paths through direct user action.
 7. Apple Vision OCR is now implemented but needs macOS hardware verification;
    local VLM, cloud reasoning with explicit approval and full-fidelity visual
    evidence still require separate implementation and E2E acceptance.
+
+## Optional API-enhanced reasoning
+
+1. Open Capabilities in the new UI and save an OpenAI-compatible API Base URL, model ID and optional API key.
+2. Run **汇总证据** for the selected video: it collects local ASR, storyboard and Apple Vision OCR if available.
+3. Click **API 深度推理** and explicitly approve sending only ASR/OCR text to the shown provider.
+4. The resulting Markdown remains separate from the raw evidence and can be exported in full; MCP reads it in pages.
+
+Keys are stored in a local owner-readable configuration file (`0600`), not in the Git repository. Keychain integration and browser/host threat modeling remain release gates.
