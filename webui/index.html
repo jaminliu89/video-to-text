@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111e24">
+  <meta name="description" content="DRE Media Studio — 从原始视频到可信的完整知识资产。">
+  <title>DRE Studio · 本地媒体智能工作台</title>
+  <link rel="stylesheet" href="/studio-assets/styles.css">
+  <script defer src="/studio-assets/app.js"></script>
+</head>
+<body>
+  <div class="app-shell" id="app">
+    <aside class="side" aria-label="主导航">
+      <div class="brand">
+        <div class="brand-icon"><span class="brand-orbit"></span><span class="brand-core"></span></div>
+        <div class="brand-copy"><strong>DRE <em>Studio</em></strong><span>MEDIA INTELLIGENCE</span></div>
+      </div>
+      <div class="side-caption">工作空间</div>
+      <nav class="side-navigation" id="nav">
+        <button type="button" class="nav-button active" data-view="home"><span class="nav-glyph" data-icon="home"></span>总览<span class="nav-shortcut">01</span></button>
+        <button type="button" class="nav-button" data-view="studio"><span class="nav-glyph" data-icon="film"></span>分析工作台<span class="nav-shortcut">02</span></button>
+        <button type="button" class="nav-button" data-view="documents"><span class="nav-glyph" data-icon="file-text"></span>文稿与交付<span class="nav-shortcut">03</span></button>
+        <button type="button" class="nav-button" data-view="jobs"><span class="nav-glyph" data-icon="activity"></span>任务中心<span class="nav-shortcut">04</span></button>
+      </nav>
+      <div class="side-caption side-caption-secondary">系统</div>
+      <nav class="side-navigation">
+        <button type="button" class="nav-button" data-view="capabilities"><span class="nav-glyph" data-icon="cpu"></span>模型与接入</button>
+      </nav>
+      <div class="side-fill"></div>
+      <div class="side-status">
+        <div class="side-status-top"><span class="live-dot"></span>本地引擎 <span class="side-status-note" id="sidebar-engine">检测中</span></div>
+        <div class="side-status-copy">媒体默认保留在这台 Mac。云端推理只有在你明确授权时才执行。</div>
+      </div>
+      <div class="side-foot"><span>PRIVATE WORKSPACE</span><span>v2.0 preview</span></div>
+    </aside>
+    <div class="main-frame">
+      <header class="topbar">
+        <div class="top-left">
+          <button type="button" class="mobile-menu" id="menu-toggle" aria-label="切换导航"></button>
+          <div class="crumb"><span>DRE /</span><b id="page-crumb">工作台</b></div>
+        </div>
+        <div class="top-actions">
+          <button class="top-search" type="button" id="global-search" aria-label="搜索项目"><span data-icon="search"></span><span>搜索项目与文稿</span><kbd>⌘ K</kbd></button>
+          <div class="top-divider"></div>
+          <span class="privacy-indicator"><span class="live-dot"></span>Local first</span>
+          <button type="button" class="button button-primary top-import" id="top-import"><span data-icon="plus"></span>导入素材</button>
+        </div>
+      </header>
+      <main class="main" id="content" tabindex="-1" aria-live="polite">
+        <div class="skeleton-page">
+          <div class="skeleton skeleton-title"></div>
+          <div class="skeleton skeleton-sub"></div>
+          <div class="skeleton skeleton-hero"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <input type="file" id="upload-input" accept=".mp4,.mov,.mkv,.webm,.avi,.m4v,.flv,.wmv,.ts,video/*" hidden multiple>
+  <div id="modal" class="modal-root" aria-live="off"></div>
+  <div id="toast-stack" class="toast-stack" role="status" aria-live="polite"></div>
+  <noscript>请启用 JavaScript 以使用 DRE Media Studio。</noscript>
+</body>
+</html>
