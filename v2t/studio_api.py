@@ -13,7 +13,7 @@ import urllib.parse
 from pathlib import Path
 
 from fastapi import HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from nicegui import app
 from v2t import workbench_service as svc
@@ -97,6 +97,11 @@ def saved_document(job_id: str, data: dict) -> str:
     with svc._db() as db:
         row = db.execute("SELECT content FROM document_edits WHERE job_id=?", (job_id,)).fetchone()
     return row["content"] if row else str(data.get("analysis_markdown") or "")
+
+
+@app.get("/")
+def root_redirect():
+    return RedirectResponse("/studio", status_code=307)
 
 
 @app.get("/studio", response_class=HTMLResponse)
