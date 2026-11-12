@@ -89,7 +89,32 @@ def api_job_get(job_id: str, authorization: str | None = Header(default=None)):
     job = svc.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    # Status requests must not stuff an entire long transcript into Agent context.
+    job.pop("result", None)
+    job["result_available"] = job["state"] == "done"
     return job
+
+
+@app.get("/api/v1/jobs/{job_id}/result")
+def api_job_result(job_id: str, offset: int = 0, limit: int = 50,
+                   channel: str = "segments", authorization: str | None = Header(default=None)):
+    authorize(authorization)
+    job = svc.get_job(job_id)
+    if not job or job["state"] != "done":
+        raise HTTPException(status_code=404, detail="Finished job not found")
+    if channel not in ("segments", "ocr_segments"):
+        raise HTTPException(status_code=400, detail="Supported channels: segments, ocr_segments")
+    data = _display_result(job) or {}
+    values = data.get(channel, [])
+    if not isinstance(values, list):
+        values = []
+    offset, limit = max(0, offset), max(1, min(limit, 200))
+    return {
+        "job_id": job_id, "channel": channel,
+        "offset": offset, "limit": limit, "total": len(values),
+        "items": values[offset:offset+limit],
+        "has_more": offset + limit < len(values),
+    }
 
 
 @app.post("/api/v1/jobs/{job_id}/cancel")
