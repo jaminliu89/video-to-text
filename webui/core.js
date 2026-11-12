@@ -57,7 +57,7 @@
     view: 'home', media: [], jobs: [], caps: {}, provider: {}, selected: null,
     results: new Map(), currentTab: 'segments', query: '', time: 0,
     duration: 0, docMode: 'read', docDraft: '', activeDocument: null, editing: null,
-    engine: 'auto', loaded: false
+    engine: 'auto', loaded: false, editedKeys: new Set()
   };
   const $ = function (s, root) { return (root||document).querySelector(s); };
   const $$ = function (s, root) { return Array.from((root||document).querySelectorAll(s)); };
@@ -152,6 +152,7 @@
     if(!force && state.results.has(jobId))return state.results.get(jobId);
     const res=await api('/jobs/'+encodeURIComponent(jobId)+'/result');
     state.results.set(jobId,res.data);
+    Object.keys(res.edits||{}).forEach(key=>state.editedKeys.add(jobId+':'+key));
     return res.data;
   }
   async function loadMediaResults() {
@@ -188,9 +189,9 @@
   }
   function nav(view) {
     state.view=view;
-    $$('.nav-button').forEach(btn=>btn.classList.toggle('active',btn.dataset.view===view));
+    $$('.nav-button').forEach(btn=>btn.classList.toggle('active',btn.dataset.view===view||(view==='projects'&&btn.dataset.view==='home')));
     $('#page-crumb').textContent={
-      home:'空间总览',studio:'分析工作台',documents:'文稿与交付',
+      home:'空间总览',projects:'媒体项目',studio:'分析工作台',documents:'文稿与交付',
       jobs:'任务中心',capabilities:'模型与接入'
     }[view]||view;
     document.body.classList.remove('menu-open');
