@@ -440,3 +440,191 @@ function render(){
   }
 }
 D.render=render;
+
+async function choose(id){
+  S.selected=id;S.time=0;S.duration=0;S.currentTab='segments';S.query='';
+  await D.loadMediaResults();D.nav('studio');
+}
+function setView(view){
+  if(view==='studio'||view==='documents')D.loadMediaResults().then(()=>D.nav(view));
+  else D.nav(view);
+}
+function showImport(){
+  const html='<div class="modal-title">导入媒体到工作台</div>'+
+    '<p class="modal-sub">直接选择或拖入本地视频。文件只保存在这台 Mac 的工作空间中，不会自动上传外部云服务。</p>'+
+    '<div class="dropzone" id="dropzone" role="button" tabindex="0">'+
+    '<div class="dropzone-icon">'+I('upload',26)+'</div>'+
+    '<strong>拖拽视频到这里，或点击选择文件</strong>'+
+    '<span>MP4 / MOV / MKV / WebM 等 · 多文件可依次导入</span>'+
+    '<button class="button button-soft" id="choose-files">'+I('folder',15)+'浏览本地文件</button></div>'+
+    '<div class="import-progress hidden" id="upload-progress"><div id="upload-progress-bar"></div></div>'+
+    '<details style="margin-top:18px"><summary class="text-button" style="cursor:pointer;list-style:none">导入本机文件夹或已有路径</summary>'+
+    '<div class="form-field"><label for="import-path">Mac 本地文件或文件夹路径</label>'+
+    '<input type="text" id="import-path" placeholder="/Users/.../Movies/课程">'+
+    '<span class="form-help">适合包含很多视频的课程目录；此操作只登记路径，不复制整个文件夹。</span>'+
+    '<button class="button button-neutral" type="button" id="import-by-path">登记此路径</button></div></details>'+
+    '<div class="modal-actions">'+btn('取消','close-modal','button-neutral')+'</div>';
+  D.modal(html,true);
+  const zone=$('#dropzone'),input=$('#upload-input');
+  function open(){input.click();}
+  zone.addEventListener('click',e=>{if(e.target.closest('#choose-files'))return;open();});
+  zone.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}});
+  $('#choose-files').addEventListener('click',open);
+  zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('dragover');});
+  zone.addEventListener('dragleave',()=>zone.classList.remove('dragover'));
+  zone.addEventListener('drop',e=>{
+    e.preventDefault();zone.classList.remove('dragover');
+    uploadFiles(Array.from(e.dataTransfer.files));
+  });
+  $('#import-by-path').addEventListener('click',async()=>{
+    const path=$('#import-path').value.trim();
+    if(!path){D.toast('请输入存在的本地路径',true);return;}
+    try{
+      const m=await D.api('/import/path',{method:'POST',json:{path}});
+      D.closeModal();await D.load();await choose(m.id);
+      D.toast('素材已加入工作空间');
+    }catch(err){D.toast(err.message,true);}
+  });
+}
+async function uploadFiles(files){
+  if(!files||!files.length)return;
+  const progress=$('#upload-progress'),bar=$('#upload-progress-bar');
+  if(progress)progress.classList.remove('hidden');
+  let last=null,failed=0;
+  for(let i=0;i<files.length;i++){
+    const file=files[i];
+    try{
+      last=await uploadOne(file,p=>{
+        if(bar)bar.style.width=(((i+p)/files.length)*100).toFixed(1)+'%';
+      });
+    }catch(err){failed++;D.toast(file.name+'：'+err.message,true);}
+  }
+  if(failed===files.length)return;
+  D.closeModal();await D.load();
+  if(last)await choose(last.id);
+  D.toast('已导入 '+(files.length-failed)+' 个媒体文件');
+}
+function uploadOne(file,onProgress){
+  return new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST','/ui-api/upload',true);
+    xhr.withCredentials=true;
+    xhr.setRequestHeader('X-DRE-UI','1');
+    xhr.setRequestHeader('X-File-Name',encodeURIComponent(file.name));
+    xhr.upload.onprogress=e=>{if(e.lengthComputable)onProgress(e.loaded/e.total);};
+    xhr.onerror=()=>reject(new Error('文件上传失败'));
+    xhr.onload=()=>{
+      let data;
+      try{data=JSON.parse(xhr.responseText);}catch(_e){data=null;}
+      if(xhr.status>=200&&xhr.status<300)resolve(data);
+      else reject(new Error(data?.detail||'HTTP '+xhr.status));
+    };
+    xhr.send(file);
+  });
+}
+function showSearch(){
+  const html='<div class="modal-title">在工作台中查找</div>'+
+    '<div class="form-field"><input id="search-modal-input" placeholder="输入视频或项目名称…" autofocus></div>'+
+    '<div id="search-modal-results" style="max-height:50vh;overflow:auto;margin-top:12px"></div>'+
+    '<div class="modal-actions">'+btn('关闭','close-modal','button-neutral')+'</div>';
+  D.modal(html);
+  const input=$('#search-modal-input'),out=$('#search-modal-results');
+  function refresh(){
+    const q=input.value.trim().toLowerCase();
+    const found=S.media.filter(m=>!q||m.title.toLowerCase().includes(q)).slice(0,30);
+    out.innerHTML=found.map(m=>
+      '<button class="doc-option" data-action="choose" data-id="'+h(m.id)+'">'+
+      '<strong>'+h(m.title)+'</strong><span>'+h(m.source)+'</span></button>'
+    ).join('')||(empty('search','没有匹配项目','尝试更短的搜索词',''));
+  }
+  input.addEventListener('input',refresh);refresh();input.focus();
+}
+async function confirmReasoning(){
+  const media=D.selectedMedia(),source=resolveMediaJobs().digest;
+  if(!media||!source){D.toast('请先运行「开始完整分析」得到本地证据',true);return;}
+  let preview;
+  try{preview=await D.api('/reason/preview?source_job_id='+encodeURIComponent(source.id));}
+  catch(err){D.toast(err.message,true);return;}
+  if(!preview.provider?.configured){
+    D.toast('请先到「模型与接入」配置推理 API',true);
+    D.nav('capabilities');return;
+  }
+  const box='<div class="modal-title">授权 AI 深度撰写</div>'+
+    '<p class="modal-sub">此步骤会把你指定的本地文字证据发送给下方服务商。原视频、图片和原始文件不会发送。</p>'+
+    '<div class="modal-disclosure"><div><b>目标模型：</b>'+h(preview.provider.model)+'</div>'+
+    '<div><b>服务端点：</b>'+h(preview.provider.base_url)+'</div>'+
+    '<div><b>发送范围：</b>'+h(preview.scope)+'</div>'+
+    '<div><b>预计输入：</b>'+Number(preview.characters).toLocaleString()+' 字符，'+
+    Number(preview.segments)+' 条证据</div></div>'+
+    '<label class="consent-box"><input type="checkbox" id="reason-consent">'+
+    '<span>我已经了解以上数据范围，并明确授权该次视频分析使用这个推理 API。</span></label>'+
+    '<div class="modal-actions">'+btn('取消','close-modal','button-neutral')+
+    btn('授权并生成完整文稿','reason-submit','button-primary','sparkles')+'</div>';
+  D.modal(box);
+  const submit=$('[data-action="reason-submit"]');
+  if(submit)submit.addEventListener('click',async()=>{
+    if(!$('#reason-consent')?.checked){D.toast('请先勾选本次数据授权',true);return;}
+    submit.disabled=true;
+    try{
+      await D.api('/reason',{method:'POST',json:{media_id:media.id,
+        source_job_id:source.id,consent:true}});
+      D.closeModal();await D.refreshJobs();render();
+      D.toast('文稿生成任务已提交。可在任务中心查看状态。');
+    }catch(err){submit.disabled=false;D.toast(err.message,true);}
+  },{once:true});
+}
+async function start(kind){
+  try{await D.startJob(kind,S.engine);render();}
+  catch(err){D.toast(err.message,true);}
+}
+async function editEvidence(index,channel){
+  const e=evidenceBundleForTab();
+  if(!e.job||channel!==e.channel)return;
+  const row=$('.evidence-entry[data-evidence-index="'+index+'"]');
+  const source=e.items[Number(index)];
+  if(!row||!source)return;
+  const editor=document.createElement('div');
+  editor.className='review-editor';
+  editor.innerHTML='<textarea aria-label="校对转写文字">'+h(source.text||'')+'</textarea>'+
+    '<div class="review-actions"><button class="button button-neutral" data-action="discard-edit">取消</button>'+
+    '<button class="button button-primary" data-action="save-evidence">保存校对</button></div>';
+  row.appendChild(editor);
+  $('.evidence-edit',row).disabled=true;
+  const textarea=$('textarea',editor);textarea.focus();
+  $('[data-action="discard-edit"]',editor).addEventListener('click',()=>renderEvidence());
+  $('[data-action="save-evidence"]',editor).addEventListener('click',async()=>{
+    try{
+      await D.api('/jobs/'+e.job.id+'/evidence',{method:'PUT',json:{
+        channel:e.channel,index:Number(index),text:textarea.value
+      }});
+      source.text=textarea.value;
+      if(!S.editedKeys)S.editedKeys=new Set();
+      S.editedKeys.add(e.job.id+':'+e.channel+':'+index);
+      renderEvidence();renderTimeline();D.toast('校对已保存，原始模型结果仍保留');
+    }catch(err){D.toast(err.message,true);}
+  });
+}
+async function saveProvider(e){
+  e.preventDefault();
+  try{
+    const data=await D.api('/provider',{method:'POST',json:{
+      base_url:$('#provider-base').value,
+      model:$('#provider-model').value,api_key:$('#provider-key').value
+    }});
+    S.provider=data;
+    D.toast('API 已保存。连通性与实际输出仍需运行时验证。');
+    render();
+  }catch(err){D.toast(err.message,true);}
+}
+async function saveDocument(){
+  const jobId=S.activeDocument;
+  if(!jobId)return;
+  const textarea=$('#document-editor');
+  const content=textarea?textarea.value:S.docDraft;
+  try{
+    await D.api('/jobs/'+jobId+'/document',{method:'PUT',json:{content}});
+    if(S.results.has(jobId))S.results.get(jobId).analysis_markdown=content;
+    S.docDraft=content;editingDocumentDirty=false;
+    D.toast('文稿修改已保存到独立版本');render();
+  }catch(err){D.toast(err.message,true);}
+}
