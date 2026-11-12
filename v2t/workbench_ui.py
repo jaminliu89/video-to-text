@@ -17,6 +17,7 @@ from nicegui import app, ui
 from pydantic import BaseModel
 
 from v2t import workbench_service as svc
+from v2t import workbench_reasoning as reasoning
 
 svc.initialize_schema_once()
 TOKEN_FILE = svc.STATE / "api_token"
@@ -245,6 +246,8 @@ def _export_job(job: dict, fmt: str) -> Path:
     file = output / f"{job['id']}.{ext}"
     if fmt == "json":
         content = json.dumps(data, ensure_ascii=False, indent=2)
+    elif data.get("analysis_markdown"):
+        content = data["analysis_markdown"]
     else:
         lines = [
             "# DRE Media Workbench · 视频证据文档",
@@ -357,7 +360,7 @@ def workbench():
                 for job in rows[:10]:
                     with ui.row().classes("w-full items-center justify-between v2t-task"):
                         with ui.column().style("gap:2px;min-width:0"):
-                            ui.label({"transcribe":"语音转写","storyboard":"镜头故事板","digest":"本地证据汇总","distill":"知识蒸馏","ocr":"画面文字 OCR"}.get(job["kind"],job["kind"])).style("font-size:12px;font-weight:600")
+                            ui.label({"transcribe":"语音转写","storyboard":"镜头故事板","digest":"本地证据汇总","distill":"知识蒸馏","ocr":"画面文字 OCR","reason":"API 深度推理"}.get(job["kind"],job["kind"])).style("font-size:12px;font-weight:600")
                             ui.label(job["id"][:10]+" · "+job["engine"]).classes("v2t-muted")
                         with ui.column().classes("items-end").style("gap:5px"):
                             css = "v2t-done" if job["state"]=="done" else "v2t-running" if job["state"]=="running" else "v2t-error" if job["state"] in ("error","interrupted") else "v2t-queued"
@@ -470,6 +473,32 @@ def workbench():
                     ui.label("导入一个视频或课程文件夹，形成可持续积累的媒体资产。").classes("v2t-muted")
                     ui.button("选择本地媒体", icon="add", on_click=show_import).classes("v2t-btn-primary")
 
+            def show_reason_dialog(source_job_id):
+                info = reasoning.provider_info()
+                if not info.get("configured"):
+                    ui.notify("请先在能力中心配置 OpenAI 兼容推理 API", type="warning")
+                    go("capability")
+                    return
+                with ui.dialog() as dialog, ui.card().style("width:580px;max-width:96vw;padding:24px;border-radius:18px"):
+                    ui.label("增强推理 · 数据外发确认").classes("v2t-section")
+                    ui.label(f"目标模型：{info.get('model')}").style("font-size:13px;font-weight:650")
+                    ui.label(f"服务地址：{info.get('base_url')}").classes("v2t-muted")
+                    ui.label("只发送该视频本地提取的 ASR/OCR 文字证据；不会发送视频原片。"
+                             "生成内容会保留来源标记，原始转写不会被覆盖。").classes("v2t-muted")
+                    agree = ui.checkbox("我确认将上述文字证据发送至该模型服务", value=False)
+                    with ui.row().classes("justify-end w-full"):
+                        ui.button("取消", on_click=dialog.close).props("flat")
+                        def approved():
+                            try:
+                                svc.submit_reasoning(state["selected"], source_job_id, consent=agree.value)
+                                dialog.close()
+                                job_list.refresh()
+                                ui.notify("已提交增强推理任务", type="positive")
+                            except Exception as exc:
+                                ui.notify(str(exc), type="negative")
+                        ui.button("授权并执行", on_click=approved).classes("v2t-btn-primary")
+                dialog.open()
+
             def show_studio():
                 media = svc.get_media(state["selected"]) if state["selected"] else None
                 if not media:
@@ -502,7 +531,11 @@ def workbench():
                         ui.button("开始转写", icon="record_voice_over", on_click=lambda: start("transcribe")).classes("v2t-btn-primary").props("no-caps")
                         ui.button("镜头故事板", icon="view_module", on_click=lambda: start("storyboard")).classes("v2t-btn-soft").props("no-caps")
                         ui.button("画面文字 OCR", icon="text_snippet", on_click=lambda: start("ocr")).classes("v2t-btn-soft").props("no-caps")
-                        ui.button("汇总证据", icon="description", on_click=lambda: start("digest")).classes("v2t-btn-soft").props("no-caps").tooltip("仅本地语音+镜头汇总，不会调用云端 LLM")
+                        ui.button("汇总证据", icon="description", on_click=lambda: start("digest")).classes("v2t-btn-soft").props("no-caps").tooltip("本地 ASR、OCR 和镜头证据汇总")
+                        latest_digest = next((j for j in jobs if j["kind"] == "digest" and j["state"] == "done"), None)
+                        if latest_digest:
+                            ui.button("API 深度推理", icon="psychology", on_click=lambda j=latest_digest["id"]: show_reason_dialog(j)).classes("v2t-btn-soft").props("no-caps")
+
                     else:
                         ui.button("蒸馏整个文件夹", icon="auto_awesome", on_click=lambda: start("distill")).classes("v2t-btn-primary").props("no-caps")
                     ui.select(options={"auto":"自动选择","mlx-whisper":"MLX Whisper","faster-whisper":"faster-whisper","qwen3-asr":"Qwen3-ASR 本地","sensevoice":"SenseVoice"},
@@ -559,6 +592,23 @@ def workbench():
                                     ui.label(entry.get("reason") or "自动检测").classes("v2t-muted")
                                 ui.label("可用" if entry.get("available") else "不可用").classes("v2t-pill "+("v2t-done" if entry.get("available") else "v2t-queued"))
                     with ui.column().classes("v2t-card v2t-card-pad").style("flex:1;min-width:300px;gap:10px"):
+                        ui.label("增强推理模型").classes("v2t-section")
+                        pinfo = reasoning.provider_info()
+                        ui.label("为本地识别结果选择一个 OpenAI 兼容推理 API。只在你对具体视频授权后才会发送文字。").classes("v2t-muted")
+                        base = ui.input("API Base URL", value=pinfo.get("base_url") or "",
+                                        placeholder="https://provider.example/v1").props("outlined dense").classes("w-full")
+                        model_name = ui.input("模型 ID", value=pinfo.get("model") or "",
+                                              placeholder="model-name").props("outlined dense").classes("w-full")
+                        secret = ui.input("API Key（同一端点留空则保留旧密钥）", password=True,
+                                          password_toggle_button=True).props("outlined dense").classes("w-full")
+                        def save_api():
+                            try:
+                                saved = reasoning.save_provider(base.value or "", model_name.value or "", secret.value or "")
+                                ui.notify("配置已保存在本机（尚未验证连通性）", type="positive")
+                            except Exception as exc:
+                                ui.notify(str(exc), type="negative")
+                        ui.button("保存推理 API", icon="save", on_click=save_api).classes("v2t-btn-soft")
+                        ui.separator()
                         ui.label("Agent / API 接入").classes("v2t-section")
                         ui.label("同一条执行队列支持 Web 和带令牌的 REST API。MCP 可使用可选桥接器，不复制模型实现。").classes("v2t-muted")
                         ui.label("地址：http://127.0.0.1:8765/api/v1").style("font-size:12px")
