@@ -28,7 +28,9 @@ cli.py — video2text 的 Agent 调用入口
   python cli.py info output/课程/视频名 --json
 """
 
+from contextlib import redirect_stdout
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -43,6 +45,16 @@ from v2t import ffmpeg as ff
 
 ASR_ENGINES = ["faster-whisper", "mlx-whisper", "qwen3-asr",
                "whisper", "sensevoice", "minutes"]
+
+def _media_cache_key(path: Path) -> str:
+    """Stable file identity, including absolute path, size and modification time.
+
+    Avoid cache collisions when different folders contain the same filename.
+    """
+    st = path.stat()
+    data = f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}"
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]
+
 
 
 def out_json(data, as_json: bool):
@@ -67,7 +79,7 @@ def cmd_transcribe(args):
     if not video_path.exists():
         out_json({"error": f"找不到: {video_path}"}, args.json); sys.exit(1)
 
-    cache_key = video_path.stem
+    cache_key = _media_cache_key(video_path)
     audio_path = cfg.CACHE_DIR / f"{cache_key}_audio.wav"
     if not audio_path.exists():
         ff.extract_audio(video_path, audio_path)
@@ -96,7 +108,12 @@ def cmd_storyboard(args):
         out_json({"error": f"找不到: {video_path}"}, args.json); sys.exit(1)
 
     asset_dir = assets.get_asset_dir(video_path, args.category)
-    result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    if args.json:
+        # Keep stdout machine-readable; old storyboard implementation prints progress.
+        with redirect_stdout(sys.stderr):
+            result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    else:
+        result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
 
     out_json({
         "video": str(video_path),
@@ -119,7 +136,7 @@ def cmd_digest(args):
     video_info = probe_video(video_path)
 
     # 1. 转写
-    cache_key = video_path.stem
+    cache_key = _media_cache_key(video_path)
     audio_path = cfg.CACHE_DIR / f"{cache_key}_audio.wav"
     if not audio_path.exists():
         ff.extract_audio(video_path, audio_path)
@@ -129,7 +146,11 @@ def cmd_digest(args):
     assets.save_transcript(asset_dir, segments)
 
     # 2. 故事板
-    sb_result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    if args.json:
+        with redirect_stdout(sys.stderr):
+            sb_result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
+    else:
+        sb_result = storyboard.build_storyboard(video_path, asset_dir, max_frames=args.max_frames)
 
     # 3. LLM 摘要（需要 SILICONFLOW_API_KEY）
     summary = summarize_with_llm(segments, video_info, deep=args.deep)

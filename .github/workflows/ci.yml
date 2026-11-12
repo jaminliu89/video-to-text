@@ -37,6 +37,15 @@ jobs:
           python -m py_compile v2t/asr.py v2t/storyboard.py v2t/assets.py
           python -m py_compile v2t/ffmpeg.py v2t/distill.py v2t/distill_prompts.py
           python -m py_compile benchmarks/asr_bench.py
+          python -m py_compile workbench.py v2t/workbench_service.py v2t/workbench_ui.py v2t/workbench_mcp.py v2t/workbench_reasoning.py
+          python -m py_compile tests/test_workbench_service.py
+
+      - name: Product frontend syntax
+        run: |
+          node --check webui/core.js
+          node --check webui/app.js
+          test -f webui/index.html
+          test -f webui/styles.css
 
       - name: Import check
         run: |
@@ -51,6 +60,9 @@ jobs:
         run: |
           python tests/test_distill_units.py
           python tests/test_asr_units.py
+          python tests/test_workbench_service.py
+          python tests/test_workbench_reasoning.py
+          python tests/test_studio_ui.py
 
       - name: SEP critical-path smoke (#06)
         run: |
@@ -123,6 +135,12 @@ jobs:
           assert by["mlx-whisper"]["gpu"] is True
           print("✓ mlx-whisper 在 Apple Silicon 上可用")
           PY
+
+      - name: Compile and smoke Apple Vision OCR
+        run: |
+          swiftc -O native/apple_vision/ocr.swift -o "$RUNNER_TEMP/dre-ocr"
+          "$RUNNER_TEMP/dre-ocr" screenshots/home.png > "$RUNNER_TEMP/ocr-result.json"
+          python -c 'import json,os; p=os.path.join(os.environ["RUNNER_TEMP"],"ocr-result.json"); assert json.load(open(p))["ok"]'
 
       - name: Unit tests
         run: |
