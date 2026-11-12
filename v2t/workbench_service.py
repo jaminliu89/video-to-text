@@ -184,17 +184,13 @@ def capabilities() -> dict:
 
 
 def _staged_input(media: dict) -> str:
-    if media["kind"] == "folder":
-        return media["source"]
     path = Path(media["source"])
-    if not path.is_file():
+    if media["kind"] == "folder" and not path.is_dir():
         raise FileNotFoundError(path)
-    link = STAGING / f"{media['id']}{path.suffix.lower()}"
-    if link.is_symlink() and link.resolve() != path.resolve():
-        link.unlink()
-    if not link.exists():
-        link.symlink_to(path)
-    return str(link)
+    if media["kind"] == "video" and not path.is_file():
+        raise FileNotFoundError(path)
+    # CLI cache keys now include resolved file identity. Avoid needless symlinks.
+    return str(path)
 
 
 def _cli(kind: str, source: str, engine: str) -> dict:
