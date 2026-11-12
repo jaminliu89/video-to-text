@@ -112,7 +112,7 @@ def studio():
     r.headers["Cache-Control"] = "no-store"
     r.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' data: blob:; "
-        "media-src 'self' blob:; script-src 'self'; style-src 'self'; "
+        "media-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; "
         "connect-src 'self'; frame-ancestors 'none'"
     )
     return r
