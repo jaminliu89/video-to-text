@@ -277,3 +277,166 @@ function seek(ts){
   if(video.readyState>=1){video.currentTime=Number(ts)||0;}
   else {video.addEventListener('loadedmetadata',()=>video.currentTime=Number(ts)||0,{once:true});}
 }
+
+function documentsView(){
+  const media=D.selectedMedia();
+  if(!media)return pageHead('DELIVERABLES','文稿与交付','首先选择一个媒体项目。')+
+    '<div class="card">'+empty('file-text','还没有可以交付的内容','导入并分析视频，才能从证据生成文稿。',
+      btn('导入视频','import','button-primary','plus'))+'</div>';
+  const records=D.jobsFor(media.id).filter(j=>j.state==='done');
+  const reasons=records.filter(j=>j.kind==='reason');
+  if(!S.activeDocument || !reasons.some(j=>j.id===S.activeDocument))S.activeDocument=reasons[0]?.id||null;
+  const docJob=reasons.find(j=>j.id===S.activeDocument);
+  const doc=docJob&&S.results.get(docJob.id);
+  const article=(S.docMode==='edit'&&S.docDraft)?S.docDraft:(doc?.analysis_markdown||'');
+  const header=pageHead('DELIVERABLES / DOCUMENTS','文稿与交付',
+    '原始证据永久保留；生成稿可二次编辑、验证和导出。',
+    docJob?btn('下载 Markdown','doc-download','button-primary','download'):'');
+  const list=records.map(j=>{
+    const title=({reason:'完整蒸馏文稿',digest:'多模态证据汇总',
+      transcribe:'语音逐字稿',ocr:'画面文字',storyboard:'镜头索引',distill:'课程知识包'})[j.kind]||j.kind;
+    const selected=docJob&&docJob.id===j.id;
+    return '<button type="button" class="doc-option'+(selected?' active':'')+
+      '" data-action="'+(j.kind==='reason'?'pick-document':'download-record')+
+      '" data-id="'+h(j.id)+'"><strong>'+h(title)+'</strong><span>'+
+      D.fmtDate(j.created_at)+' · '+h(j.engine)+'</span></button>';
+  }).join('');
+  const content=docJob&&doc?
+    '<div class="doc-toolbar"><span class="pill accent">来源可回溯 · 模型生成</span>'+
+    '<div class="action-group"><div class="doc-mode">'+
+    '<button data-action="doc-mode" data-mode="read" class="'+(S.docMode==='read'?'active':'')+'">阅读</button>'+
+    '<button data-action="doc-mode" data-mode="edit" class="'+(S.docMode==='edit'?'active':'')+'">编辑</button>'+
+    '</div>'+btn('保存修改','doc-save','button-soft','save',
+        S.docMode!=='edit'?'disabled':'')+'</div></div>'+
+    (S.docMode==='edit'?
+      '<textarea class="doc-editor" id="document-editor" aria-label="编辑 Markdown 文稿" spellcheck="false">'+h(article)+'</textarea>':
+      '<article class="doc-article">'+renderMarkdown(article)+'</article>')+
+    '<div class="doc-foot"><span>'+String(article.length)+' 字 · 人工修改不会覆盖模型原始结果</span>'+
+    '<span>'+h(docJob.engine)+'</span></div>':
+    empty('book','还没有生成完整文稿',
+      '先回到分析工作台完成本地证据汇总，再选择已配置的推理 API 并授权生成。',
+      btn('返回分析工作台','studio','button-primary','arrow-right'));
+  return header+'<div class="docs-layout"><aside class="card docs-left">'+
+    '<div class="card-head"><span class="card-title">项目交付物</span>'+D.pill(String(records.length),'subtle')+'</div>'+
+    '<div class="divider"></div>'+(records.length?list:
+    '<div class="preview-empty">暂无完成的任务</div>')+
+    '<div class="divider"></div><div class="tiny">点击非文稿结果可下载对应的完整 Markdown。</div>'+
+    '</aside><section class="card docs-main">'+content+'</section></div>';
+}
+function renderMarkdown(text){
+  const lines=String(text||'').split(/\r?\n/),out=[];
+  let paragraph=[],code=[],inCode=false;
+  function flush(){if(paragraph.length){out.push('<p>'+paragraph.map(h).join('<br>')+'</p>');paragraph=[];}}
+  for(const line of lines){
+    if(/^\s*(?:~{3}|\x60{3})/.test(line)){
+      flush();
+      if(inCode){out.push('<div class="md-code">'+h(code.join('\n'))+'</div>');code=[];}
+      inCode=!inCode;continue;
+    }
+    if(inCode){code.push(line);continue;}
+    const heading=line.match(/^(#{1,3})\s+(.*)/);
+    if(heading){
+      flush();const lvl=heading[1].length;
+      out.push('<h'+lvl+'>'+h(heading[2])+'</h'+lvl+'>');
+    }else if(!line.trim())flush();
+    else if(/^[-*]\s/.test(line)){flush();out.push('<p>• '+h(line.slice(2))+'</p>');}
+    else paragraph.push(line);
+  }
+  flush();
+  return out.join('')||'<div class="preview-empty">文稿为空。</div>';
+}
+function jobsView(){
+  const rows=S.jobs;
+  const data=rows.map(j=>{
+    const m=S.media.find(x=>x.id===j.media_id);
+    const names={transcribe:'语音转写',digest:'完整分析',ocr:'画面文字 OCR',
+      storyboard:'镜头索引',distill:'知识蒸馏',reason:'大模型撰写'};
+    const action=j.state==='error'||j.state==='cancelled'||j.state==='interrupted'?
+      '<button class="text-button" data-action="retry-job" data-id="'+h(j.id)+'">重新执行</button>':
+      j.state==='queued'?
+      '<button class="text-button" data-action="cancel-job" data-id="'+h(j.id)+'">取消排队</button>':
+      j.state==='done'?
+      '<button class="text-button" data-action="inspect-job" data-id="'+h(j.id)+
+      '" data-media="'+h(j.media_id)+'">查看结果</button>':'<span class="tiny">执行中</span>';
+    return '<tr><td><span class="job-title">'+h(names[j.kind]||j.kind)+'</span>'+
+      '<span class="job-secondary">'+h(j.engine||'')+' · '+h(j.id.slice(0,10))+'</span></td>'+
+      '<td><span title="'+h(m?.source||'')+'">'+h(m?.title||'未知项目')+'</span></td>'+
+      '<td>'+labelStatus(j)+'</td><td>'+D.fmtDate(j.created_at)+'</td><td>'+action+'</td></tr>';
+  }).join('');
+  return pageHead('PROCESS MONITOR','任务中心','任务真实状态、失败原因与重试记录都集中在这里。',
+      btn('刷新任务','refresh','button-neutral','refresh'))+
+    '<div class="card"><div class="table-wrap"><table class="data-table"><thead><tr>'+
+    '<th>任务</th><th>媒体项目</th><th>状态</th><th>提交时间</th><th>操作</th></tr></thead><tbody>'+
+    (rows.length?data:'<tr><td colspan="5">'+empty('activity','暂无任务','提交分析后，这里会显示处理队列。','')+'</td></tr>')+
+    '</tbody></table></div></div>'+
+    '<div class="body-copy">Mac 单机持久化队列：运行中的任务无法立即取消；中断和失败的任务可重新提交。不会显示未经计算的虚假进度条。</div>';
+}
+function capabilitiesView(){
+  const engines=S.caps.engines||[], abilities=S.caps.abilities||[];
+  const provider=S.provider||{};
+  const table=engines.filter(e=>e.engine!=='minutes').map(e=>
+    '<div class="setting-row"><div><strong>'+h(e.engine)+'</strong>'+
+    '<p>'+h(e.reason||'由运行环境自动检测')+'</p></div>'+
+    D.pill(e.available?'本机可用':'未就绪',e.available?'success':'subtle')+'</div>').join('');
+  const indicators=abilities.map(a=>
+    '<div class="setting-row"><strong>'+h(a.name)+'</strong>'+
+    D.pill(a.status==='available'?'可用':a.status==='not_integrated'?'尚未接入':a.status,
+       a.status==='available'?'success':'subtle')+'</div>').join('');
+  return pageHead('CAPABILITY CENTER','模型与 Agent 接入',
+     '本地负责感知，模型服务按需参与推理；任何 Agent 可调用同一任务 API。')+
+    '<div class="settings-grid">'+
+    '<div><section class="card card-pad"><div class="card-head"><div class="card-title">本地模型</div>'+
+    D.pill('Apple Silicon','accent')+'</div><div class="card-subtitle" style="margin-top:7px">ASR 模型状态来自真实运行环境，不按安装文档猜测可用性。</div>'+
+    '<div class="status-list">'+(table||'<div class="preview-empty">尚无模型检测结果。</div>')+'</div></section>'+
+    '<section class="card card-pad" style="margin-top:16px"><div class="card-head"><div class="card-title">能力状态</div></div>'+
+    '<div class="status-list">'+indicators+'</div></section></div>'+
+    '<div><section class="card card-pad"><div class="card-head"><div class="card-title">增强推理 API</div>'+
+    D.pill(provider.configured?'已配置 · 未测速':'未配置',provider.configured?'accent':'subtle')+'</div>'+
+    '<p class="card-subtitle" style="margin-top:9px">本地识别先生成证据。只有具体视频经过你确认，才会发送 ASR/OCR 文本给这里的模型。</p>'+
+    '<form id="provider-form">'+
+    '<div class="form-field"><label for="provider-base">OpenAI 兼容 API Base URL</label>'+
+    '<input id="provider-base" autocomplete="url" placeholder="https://api.example.com/v1" value="'+h(provider.base_url||'')+'"></div>'+
+    '<div class="form-field"><label for="provider-model">模型名称</label>'+
+    '<input id="provider-model" placeholder="model-id" value="'+h(provider.model||'')+'"></div>'+
+    '<div class="form-field"><label for="provider-key">API Key</label>'+
+    '<input id="provider-key" type="password" autocomplete="off" placeholder="同一地址留空则保留已有 Key"></div>'+
+    '<p class="form-help">API 密钥只存于本机配置文件，不会显示在工作台。远端地址必须使用 HTTPS。</p>'+
+    '<button class="button button-primary" type="submit">'+I('save',16)+'保存模型配置</button>'+
+    '</form></section>'+
+    '<section class="card card-pad" style="margin-top:16px">'+
+    '<div class="card-head"><div class="card-title">Agent · MCP 接入</div>'+D.pill('本地服务','accent')+'</div>'+
+    '<p class="card-subtitle" style="margin-top:9px">Codex、Cursor、Claude Code 可以通过 stdio MCP 共享本地识别能力，不必自己加载 Qwen 或 Apple Vision。</p>'+
+    '<div class="copy-code" style="margin-top:16px"><code>python -m v2t.workbench_mcp</code>'+
+    '<button class="button button-neutral" data-action="copy-mcp" type="button">'+I('copy',13)+'复制</button></div>'+
+    '<p class="form-help" style="margin-top:11px">为 Agent 指定授权文件目录：V2T_AGENT_ALLOWED_ROOTS。兼容 REST API 与 MCP 使用同一任务服务。</p>'+
+    '</section></div></div>';
+}
+function render(){
+  let markup='';
+  if(S.view==='home')markup=homeView();
+  else if(S.view==='projects')markup=projectView();
+  else if(S.view==='studio')markup=studioView();
+  else if(S.view==='documents')markup=documentsView();
+  else if(S.view==='jobs')markup=jobsView();
+  else if(S.view==='capabilities')markup=capabilitiesView();
+  $('#content').innerHTML=markup;
+  D.renderStaticIcons();
+  if(S.view==='studio'){
+    renderEvidence();renderTimeline();bindVideo();
+    const input=$('#evidence-search');
+    if(input)input.addEventListener('input',e=>{S.query=e.target.value;renderEvidence();});
+    const select=$('#engine-select');
+    if(select)select.addEventListener('change',e=>{S.engine=e.target.value;});
+  }
+  if(S.view==='capabilities'){
+    const form=$('#provider-form');
+    if(form)form.addEventListener('submit',saveProvider);
+  }
+  if(S.view==='documents'&&S.docMode==='edit'){
+    const textarea=$('#document-editor');
+    if(textarea)textarea.addEventListener('input',e=>{
+      S.docDraft=e.target.value;editingDocumentDirty=true;
+    });
+  }
+}
+D.render=render;
