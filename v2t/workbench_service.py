@@ -70,6 +70,13 @@ def initialize() -> None:
             FOREIGN KEY(media_id) REFERENCES media(id)
         );
         CREATE INDEX IF NOT EXISTS jobs_by_media ON jobs(media_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS reasoning_approvals (
+            job_id TEXT PRIMARY KEY,
+            source_job_id TEXT NOT NULL,
+            media_id TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            approved_at TEXT NOT NULL
+        );
         """)
         con.execute("UPDATE jobs SET state='interrupted', updated_at=? WHERE state='running'", (now(),))
 
@@ -145,6 +152,30 @@ def submit_job(media_id: str, kind: str, engine: str = "auto") -> dict:
     return get_job(job_id)
 
 
+def submit_reasoning(media_id: str, source_job_id: str, consent: bool = False) -> dict:
+    """User-initiated opt-in job. Generic Agent submit_job cannot create these."""
+    if not consent:
+        raise PermissionError("必须明确确认文字证据传给推理 API")
+    from v2t.workbench_reasoning import provider_info
+    if not provider_info().get("configured"):
+        raise ValueError("请先在能力中心配置推理 API")
+    source = get_job(source_job_id)
+    if not source or source["media_id"] != media_id or source["kind"] != "digest" or source["state"] != "done":
+        raise ValueError("必须先完成该视频的本地证据汇总")
+    job_id = uuid.uuid4().hex[:20]
+    with _lock, _db() as con:
+        con.execute(
+            "INSERT INTO jobs(id,media_id,kind,engine,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (job_id, media_id, "reason", "explicit-api", "queued", now(), now()),
+        )
+        con.execute(
+            "INSERT INTO reasoning_approvals(job_id,source_job_id,media_id,scope,approved_at) VALUES(?,?,?,?,?)",
+            (job_id, source_job_id, media_id, "asr_ocr_text_only", now()),
+        )
+    start_worker()
+    return get_job(job_id)
+
+
 def resolve_engine(engine: str) -> str:
     from v2t import asr
     entries = {e["engine"]: e for e in asr.list_engines()}
@@ -178,6 +209,7 @@ def capabilities() -> dict:
             {"name": "Batch distillation", "status": "available"},
             {"name": "Apple Vision OCR", "status": "available" if sys.platform == "darwin" and shutil.which("swiftc") else "unavailable"},
             {"name": "VLM scene analysis", "status": "not_integrated"},
+            {"name": "Evidence-only reasoning API", "status": "explicit_opt_in"},
             {"name": "MCP", "status": "optional_adapter"},
         ],
     }
@@ -320,6 +352,18 @@ def _run(job: dict) -> dict:
     media = get_media(job["media_id"])
     if not media:
         raise ValueError("媒体被删除")
+    if job["kind"] == "reason":
+        with _db() as con:
+            approval = con.execute(
+                "SELECT * FROM reasoning_approvals WHERE job_id=?", (job["id"],)
+            ).fetchone()
+        if not approval or approval["media_id"] != media["id"] or approval["scope"] != "asr_ocr_text_only":
+            raise PermissionError("找不到有效的数据外发授权")
+        src_job = get_job(approval["source_job_id"])
+        if not src_job or src_job["state"] != "done" or src_job["media_id"] != media["id"]:
+            raise RuntimeError("原始证据任务不可用")
+        from v2t.workbench_reasoning import generate
+        return generate(json.loads(src_job["result"]), media["title"])
     source = _staged_input(media)
     if job["kind"] == "ocr":
         return _ocr_video(source, media["id"])
