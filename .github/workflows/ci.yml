@@ -127,6 +127,12 @@ jobs:
           print("✓ mlx-whisper 在 Apple Silicon 上可用")
           PY
 
+      - name: Compile and smoke Apple Vision OCR
+        run: |
+          swiftc -O native/apple_vision/ocr.swift -o "$RUNNER_TEMP/dre-ocr"
+          "$RUNNER_TEMP/dre-ocr" screenshots/home.png > "$RUNNER_TEMP/ocr-result.json"
+          python -c 'import json,os; p=os.path.join(os.environ["RUNNER_TEMP"],"ocr-result.json"); assert json.load(open(p))["ok"]'
+
       - name: Unit tests
         run: |
           python tests/test_distill_units.py
