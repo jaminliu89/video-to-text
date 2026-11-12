@@ -69,8 +69,18 @@ def local_media_jobs() -> dict:
 
 @mcp.tool()
 def local_media_job_status(job_id: str) -> dict:
-    """Check status and access results of a previously submitted media job."""
+    """Check job status and result availability (without dumping a whole transcript)."""
     return _call("GET", "/jobs/" + job_id)
+
+
+@mcp.tool()
+def local_media_read_segments(job_id: str, channel: str = "segments", offset: int = 0, limit: int = 50) -> dict:
+    """Page through ASR or OCR evidence. channel=segments or ocr_segments."""
+    if channel not in ("segments", "ocr_segments"):
+        raise ValueError("channel 必须为 segments 或 ocr_segments")
+    if not 0 <= offset <= 1000000 or not 1 <= limit <= 200:
+        raise ValueError("offset/limit 超出允许范围")
+    return _call("GET", f"/jobs/{job_id}/result?channel={channel}&offset={offset}&limit={limit}")
 
 
 if __name__ == "__main__":
