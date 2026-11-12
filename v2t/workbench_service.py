@@ -10,6 +10,8 @@ import hashlib
 import json
 from contextlib import contextmanager
 import os
+import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -25,7 +27,7 @@ STATE = HOME / "workbench"
 STAGING = STATE / "imports"
 DB = STATE / "workbench.sqlite3"
 SUPPORTED = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".flv", ".wmv", ".ts"}
-KINDS = {"transcribe", "storyboard", "digest", "distill"}
+KINDS = {"transcribe", "storyboard", "digest", "distill", "ocr"}
 _lock = threading.RLock()
 _worker: threading.Thread | None = None
 
@@ -131,7 +133,7 @@ def submit_job(media_id: str, kind: str, engine: str = "auto") -> dict:
     if kind not in KINDS:
         raise ValueError(f"不支持的任务: {kind}")
     if (media["kind"] == "folder") != (kind == "distill"):
-        raise ValueError("文件夹仅支持知识蒸馏；单视频支持转写、故事板及解读")
+        raise ValueError("文件夹仅支持知识蒸馏；单视频支持转写、OCR、故事板及证据汇总")
     engine = resolve_engine(engine)
     job_id = uuid.uuid4().hex[:20]
     with _lock, _db() as con:
@@ -174,7 +176,7 @@ def capabilities() -> dict:
             {"name": "ASR", "status": "available" if any(e.get("available") and e.get("engine") not in ("minutes",) for e in engines) else "unavailable"},
             {"name": "Storyboard", "status": "available"},
             {"name": "Batch distillation", "status": "available"},
-            {"name": "Apple Vision OCR", "status": "not_integrated"},
+            {"name": "Apple Vision OCR", "status": "available" if sys.platform == "darwin" and shutil.which("swiftc") else "unavailable"},
             {"name": "VLM scene analysis", "status": "not_integrated"},
             {"name": "MCP", "status": "optional_adapter"},
         ],
@@ -217,21 +219,131 @@ def _cli(kind: str, source: str, engine: str) -> dict:
         raise RuntimeError(f"CLI 没有返回合法 JSON: {proc.stdout[-400:]}") from exc
 
 
+def _ocr_video(source: str, media_id: str) -> dict:
+    """Native Apple Vision OCR at adaptive FPS. Frames retain actual ffmpeg PTS where available.
+
+    OCR sampling is not exhaustive of transient text; expose sampling metadata.
+    """
+    if sys.platform != "darwin":
+        raise RuntimeError("Apple Vision OCR 仅支持 macOS")
+    compiler = shutil.which("swiftc")
+    if not compiler:
+        raise RuntimeError("缺少 swiftc：请安装 Xcode Command Line Tools")
+    from v2t import ffmpeg as ff
+    swift_file = ROOT / "native" / "apple_vision" / "ocr.swift"
+    binary = STATE / "dre-vision-ocr"
+    if not binary.exists() or binary.stat().st_mtime < swift_file.stat().st_mtime:
+        compile_result = subprocess.run(
+            [compiler, "-O", str(swift_file), "-o", str(binary)],
+            capture_output=True, text=True, timeout=240,
+        )
+        if compile_result.returncode:
+            raise RuntimeError("Apple Vision 构建失败：" + compile_result.stderr[-1000:])
+    media_path = Path(source)
+    duration = float(ff.probe(media_path).get("duration") or 0.0)
+    if duration <= 0:
+        raise RuntimeError("无法读取视频时长，OCR 不执行")
+    # Up to 1200 frames: ~1 FPS for videos under 20 minutes.
+    step = max(1.0, duration / 1200.0)
+    frame_dir = STATE / "ocr_frames" / media_id
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    signature = f"{media_id}-{duration:.3f}-{step:.4f}"
+    manifest = frame_dir / "manifest.json"
+    images = sorted(frame_dir.glob("frame_*.jpg"))
+    times = []
+    if manifest.exists():
+        try:
+            old = json.loads(manifest.read_text())
+            if old.get("signature") == signature and len(old.get("times", [])) == len(images):
+                times = old["times"]
+        except (ValueError, OSError):
+            pass
+    if not times:
+        for img in images:
+            img.unlink()
+        cmd = [
+            "ffmpeg", "-hide_banner", "-y", "-i", str(media_path),
+            "-vf", f"fps=1/{step:.5f},scale=960:-2,showinfo",
+            "-q:v", "4", str(frame_dir / "frame_%06d.jpg"),
+        ]
+        proc = ff.run(cmd, timeout=6 * 3600)
+        if proc.returncode:
+            raise RuntimeError("视频抽帧失败：" + proc.stderr[-900:])
+        images = sorted(frame_dir.glob("frame_*.jpg"))
+        times = [float(m.group(1)) for line in proc.stderr.splitlines()
+                 if (m := re.search(r"\bpts_time:\s*([0-9.eE+-]+)", line))]
+        pts_source = "video_pts" if len(times) == len(images) else "estimated"
+        if len(times) != len(images):
+            times = [i * step for i in range(len(images))]
+        manifest.write_text(json.dumps({"signature": signature, "times": times,
+                                         "pts_source": pts_source}), encoding="utf-8")
+    else:
+        pts_source = json.loads(manifest.read_text()).get("pts_source", "estimated")
+    if not images:
+        raise RuntimeError("没有抽取到任何视频帧")
+    observations = []
+    for idx, image in enumerate(images):
+        proc = subprocess.run([str(binary), str(image)], capture_output=True, text=True, timeout=90)
+        if proc.returncode:
+            observations.append({"time": times[idx], "error": proc.stderr[-280:], "items": []})
+            continue
+        try:
+            items = json.loads(proc.stdout)["items"]
+        except (KeyError, ValueError):
+            items = []
+        observations.append({
+            "time": round(times[idx], 3),
+            "items": [x for x in items if x.get("text", "").strip()],
+        })
+    # Preserve all frame-level evidence; merge identical text only for the overview.
+    segments = []
+    for obs in observations:
+        content = " | ".join(item["text"] for item in obs["items"])
+        if not content:
+            continue
+        t = obs["time"]
+        if segments and segments[-1]["text"] == content and t - segments[-1]["end"] <= step * 1.6:
+            segments[-1]["end"] = round(t + step, 3)
+        else:
+            segments.append({"start": t, "end": round(min(duration, t + step), 3),
+                             "text": content, "frame_index": len(segments)})
+    return {
+        "ocr_segments": segments,
+        "frame_observations": observations,
+        "frame_count": len(images),
+        "sample_interval_seconds": round(step, 4),
+        "timestamp_source": pts_source,
+        "coverage": "sampled_not_exhaustive",
+        "engine": "apple-vision-native",
+    }
+
+
 def _run(job: dict) -> dict:
     media = get_media(job["media_id"])
     if not media:
         raise ValueError("媒体被删除")
     source = _staged_input(media)
+    if job["kind"] == "ocr":
+        return _ocr_video(source, media["id"])
     if job["kind"] == "digest":
         # Legacy digest invokes cloud summarization based on on-disk .env.
-        # Preserve local-only privacy by composing local ASR + storyboard instead.
+        # Preserve local-only privacy by composing only explicitly local abilities.
         transcript = _cli("transcribe", source, job["engine"])
         shots = _cli("storyboard", source, job["engine"])
+        ocr, ocr_status = {}, "UNAVAILABLE"
+        if sys.platform == "darwin" and shutil.which("swiftc"):
+            try:
+                ocr = _ocr_video(source, media["id"])
+                ocr_status = "DONE"
+            except Exception as exc:
+                ocr_status = "ERROR: " + str(exc)[:180]
         return {
             "segments": transcript.get("segments", []),
             "storyboard": shots,
+            "ocr_segments": ocr.get("ocr_segments", []),
+            "ocr_status": ocr_status,
             "analysis_status": "NOT_INFERRED",
-            "note": "仅包含本地 ASR 和镜头故事板，未调用 LLM 进行解读",
+            "note": "本地 ASR / OCR / 故事板证据汇总；没有进行云端 LLM 推理",
         }
     return _cli(job["kind"], source, job["engine"])
 
