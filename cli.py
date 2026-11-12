@@ -30,6 +30,7 @@ cli.py — video2text 的 Agent 调用入口
 
 from contextlib import redirect_stdout
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -44,6 +45,16 @@ from v2t import ffmpeg as ff
 
 ASR_ENGINES = ["faster-whisper", "mlx-whisper", "qwen3-asr",
                "whisper", "sensevoice", "minutes"]
+
+def _media_cache_key(path: Path) -> str:
+    """Stable file identity, including absolute path, size and modification time.
+
+    Avoid cache collisions when different folders contain the same filename.
+    """
+    st = path.stat()
+    data = f"{path.resolve()}|{st.st_size}|{st.st_mtime_ns}"
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:24]
+
 
 
 def out_json(data, as_json: bool):
@@ -68,7 +79,7 @@ def cmd_transcribe(args):
     if not video_path.exists():
         out_json({"error": f"找不到: {video_path}"}, args.json); sys.exit(1)
 
-    cache_key = video_path.stem
+    cache_key = _media_cache_key(video_path)
     audio_path = cfg.CACHE_DIR / f"{cache_key}_audio.wav"
     if not audio_path.exists():
         ff.extract_audio(video_path, audio_path)
@@ -125,7 +136,7 @@ def cmd_digest(args):
     video_info = probe_video(video_path)
 
     # 1. 转写
-    cache_key = video_path.stem
+    cache_key = _media_cache_key(video_path)
     audio_path = cfg.CACHE_DIR / f"{cache_key}_audio.wav"
     if not audio_path.exists():
         ff.extract_audio(video_path, audio_path)
