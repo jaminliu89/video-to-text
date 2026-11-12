@@ -62,6 +62,7 @@ jobs:
           python tests/test_asr_units.py
           python tests/test_workbench_service.py
           python tests/test_workbench_reasoning.py
+          python tests/test_studio_ui.py
 
       - name: SEP critical-path smoke (#06)
         run: |
